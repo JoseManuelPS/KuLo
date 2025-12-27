@@ -1,2 +1,0 @@
-# kulo
-Kubernetes Logs
