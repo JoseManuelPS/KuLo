@@ -17,7 +17,8 @@ Before writing code, perform an internal analysis following these steps:
 </thinking_process_directive>
 
 <task_specification>
-Develop the professional script `kulo.py`. The goal is to visualize Kubernetes logs in an aggregated, filterable, and aesthetically superior manner.
+Develop the professional application `KuLo`. The goal is to visualize Kubernetes logs in an aggregated, filterable, and aesthetically superior manner.
+This project must be structured as a robust, modular Python package, not a single script, to ensure maintainability and testability.
 
 ### 1. KUBERNETES TECHNICAL REQUIREMENTS
 - **Client**: Use the `kubernetes_asyncio` library for Python (critical for real concurrent streaming).
@@ -26,6 +27,7 @@ Develop the professional script `kulo.py`. The goal is to visualize Kubernetes l
 - **Container Support**: The script must discover and show logs for: `initContainers`, `containers`, and `ephemeralContainers`.
 - **Efficiency**: Minimize API calls. Use 'server-side' filtering (Label Selectors) whenever possible before 'client-side' filtering (Regex).
 - **API Protection (Throttling)**: Introduce a safety limit to avoid saturating the API Server or the local client. Default to processing a maximum of 10 concurrent containers. If the selector returns more, show a Warning and process only the first N. Allow adjustment via `--max-containers`.
+- **Distribution**: The final artifact must be a **single self-contained binary** (linux/amd64 and linux/arm64) to facilitate distribution without requiring Python or dependencies on the target machine. Use `PyInstaller`.
 
 ### 2. NAMESPACE LOGIC AND FILTERING
 - **Namespaces**:
@@ -89,11 +91,21 @@ Develop the professional script `kulo.py`. The goal is to visualize Kubernetes l
     *   Include production dependencies (`kubernetes_asyncio`, `rich`) and development dependencies (`pytest`, `pytest-asyncio`, `respx` or `pytest-mock`).
     *   Provide `uv` commands to initialize the environment and run the tool.
 
-2.  **Source Code**:
-    *   Deliver the complete `kulo.py` code. Must include Google-style docstrings and correct shebang.
-    *   Ensure the Producer-Consumer architecture is clearly separated into functions/classes.
+2.  **Source Code (Modular Structure)**:
+    *   Organize the code in `src/`.
+    *   **Components**:
+        *   `main.py`: Entry point and CLI argument parsing.
+        *   `client.py`: Asynchronous Kubernetes client wrapper.
+        *   `manager.py`: Core logic for Producer-Consumer coordination.
+        *   `ui.py`: `Rich` interface management and rendering.
+        *   `utils.py`: Helpers for time parsing, regex, validation.
+    *   Ensure strict separation of concerns to facilitate unit testing.
 
-3.  **Test Suite (Hybrid)**:
+3.  **Build & Distribution Workflow**:
+    *   Create a `build.py` script on `scripts/` to compile the project into a single binary.
+    *   Verify the binary works in a clean environment (e.g., inside a Docker container without Python installed).
+
+4.  **Test Suite (Hybrid)**:
     *   **Unit (Mock-first)**: Generate `tests/test_unit.py`. Must validate internal logic (JSON parsing, throttling, queues) without network.
     *   **Integration (Real Cluster)**: Generate `tests/test_e2e.py`.
         *   These tests assume an active cluster (`kind` or `minikube`) and configured context.
@@ -101,7 +113,7 @@ Develop the professional script `kulo.py`. The goal is to visualize Kubernetes l
         *   Include **Chaos** scenarios: delete a pod while streaming to verify automatic reconnection.
         *   Mark these tests with `@pytest.mark.e2e` so they don't run by default.
 
-4.  **Documentation**:
+5.  **Documentation**:
     *   `README.md`: Usage guide for humans.
     *   `AGENT.md`: Documentation **optimized for Reasoning Models (Gemini 3 / Claude 4.5)**. Must include:
         *   **Project Mind Map**: Relationships between Async/Sync components.
