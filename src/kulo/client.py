@@ -10,6 +10,7 @@ Uses kubernetes_asyncio for true async I/O operations.
 
 import asyncio
 import logging
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Self
@@ -344,6 +345,19 @@ class KuloClient:
                     # Remove trailing newline
                     line = line.rstrip("\n\r")
                     if line:
+                        # Detect K8s API error responses in stream body
+                        # When a pod is deleted, K8s returns a Status JSON instead of raising HTTP 404
+                        if line.startswith('{"kind":"Status"'):
+                            try:
+                                status_obj = json.loads(line)
+                                if (status_obj.get("status") == "Failure" and 
+                                    status_obj.get("reason") == "NotFound" and
+                                    status_obj.get("code") == 404):
+                                    raise PodNotFoundError(
+                                        f"Pod {container.namespace}/{container.pod_name} not found"
+                                    )
+                            except json.JSONDecodeError:
+                                pass  # Not valid JSON, treat as normal log line
                         yield line
             else:
                 # Non-streaming response - read all content

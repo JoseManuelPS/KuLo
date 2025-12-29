@@ -7,7 +7,7 @@
 
 ```
 kulo/
-├── src/
+├── src/kulo/
 │   ├── main.py      ─────────────────────┐
 │   │   • CLI entry point (argparse)      │
 │   │   • Argument validation             │

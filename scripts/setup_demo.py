@@ -23,7 +23,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from kubernetes_asyncio import client, config
 
@@ -98,7 +98,7 @@ def create_pod_metadata(
     annotations.update({
         "kulo.dev/demo": "true",
         "kulo.dev/created-by": "setup_demo.py",
-        "kulo.dev/created-at": datetime.utcnow().isoformat() + "Z"
+        "kulo.dev/created-at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     })
     
     return client.V1ObjectMeta(
@@ -993,24 +993,24 @@ async def cleanup_pods_and_namespace(
 
 def print_status_summary(results: List[Tuple[bool, Optional[str], Optional[Dict]]]) -> None:
     """Print a formatted status summary of pod creation results."""
-    logger.info("\n" + "="*80)
+    logger.info("="*80)
     logger.info("POD CREATION SUMMARY")
     logger.info("="*80)
     
     successful = [r for r in results if r[0]]
     failed = [r for r in results if not r[0]]
     
-    logger.info(f"\nTotal: {len(results)} | Successful: {len(successful)} | Failed: {len(failed)}")
+    logger.info(f"Total: {len(results)} | Successful: {len(successful)} | Failed: {len(failed)}")
     
     if successful:
-        logger.info("\n✓ Successful Pods:")
+        logger.info("✓ Successful Pods:")
         for success, pod_name, status in successful:
             if pod_name:
                 creation_time = status.get("creation_time", 0) if status else 0
                 logger.info(f"  • {pod_name:<30} (Phase: {status.get('phase', 'Unknown') if status else 'Unknown'}, Time: {creation_time:.2f}s)")
     
     if failed:
-        logger.info("\n✗ Failed Pods:")
+        logger.info("✗ Failed Pods:")
         for success, pod_name, status in failed:
             if pod_name:
                 phase = status.get("phase", "Unknown") if status else "Unknown"
@@ -1022,7 +1022,7 @@ def print_status_summary(results: List[Tuple[bool, Optional[str], Optional[Dict]
 
 def print_detailed_status(results: List[Tuple[bool, Optional[str], Optional[Dict]]]) -> None:
     """Print detailed status for each pod."""
-    logger.info("\n" + "="*80)
+    logger.info("="*80)
     logger.info("DETAILED POD STATUS")
     logger.info("="*80)
     
@@ -1030,7 +1030,7 @@ def print_detailed_status(results: List[Tuple[bool, Optional[str], Optional[Dict
         if not pod_name or not status:
             continue
             
-        logger.info(f"\nPod: {pod_name}")
+        logger.info(f"Pod: {pod_name}")
         logger.info(f"  Phase: {status.get('phase', 'Unknown')}")
         
         if status.get("conditions"):
@@ -1217,7 +1217,7 @@ Examples:
             
             # Verify logs if requested
             if args.verify_logs:
-                logger.info("\n" + "="*80)
+                logger.info("="*80)
                 logger.info("VERIFYING LOGS")
                 logger.info("="*80)
                 for success, pod_name, status in results:
@@ -1248,17 +1248,17 @@ Examples:
             # Print usage instructions
             successful_pods = [r[1] for r in results if r[0] and r[1]]
             if successful_pods:
-                logger.info("\n" + "="*80)
+                logger.info("="*80)
                 logger.info("USAGE INSTRUCTIONS")
                 logger.info("="*80)
-                logger.info(f"\nTo test KuLo, run:")
+                logger.info(f"To test KuLo, run:")
                 logger.info(f"  kulo -n {namespace} -f")
-                logger.info(f"\nTo filter by logger type:")
+                logger.info(f"To filter by logger type:")
                 logger.info(f"  kulo -n {namespace} -l app=json-logger -f")
                 logger.info(f"  kulo -n {namespace} -l app=plain-logger -f")
                 logger.info(f"  kulo -n {namespace} -l app=mixed-logger -f")
                 logger.info(f"  kulo -n {namespace} -l app=multi-container -f")
-                logger.info(f"\nTo cleanup, run:")
+                logger.info(f"To cleanup, run:")
                 logger.info(f"  python scripts/setup_demo.py -n {namespace} --cleanup")
                 if args.force:
                     logger.info(f"  python scripts/setup_demo.py -n {namespace} --cleanup --force")
@@ -1266,18 +1266,18 @@ Examples:
             
             # If timeout specified, wait and then cleanup
             if args.timeout is not None:
-                logger.info(f"\nWaiting {args.timeout} seconds before automatic cleanup...")
+                logger.info(f"Waiting {args.timeout} seconds before automatic cleanup...")
                 logger.info("Press Ctrl+C to cancel automatic cleanup")
                 try:
                     await asyncio.sleep(args.timeout)
-                    logger.info("\nTimeout reached. Executing automatic cleanup...")
+                    logger.info("Timeout reached. Executing automatic cleanup...")
                     await cleanup_pods_and_namespace(api, namespace, force=args.force)
                 except asyncio.CancelledError:
-                    logger.info("\nAutomatic cleanup cancelled by user")
+                    logger.info("Automatic cleanup cancelled by user")
                     # Don't re-raise, just exit gracefully
                     return
     except KeyboardInterrupt:
-        logger.info("\nOperation cancelled by user")
+        logger.info("Operation cancelled by user")
         sys.exit(0)
     except Exception as e:
         logger.error(f"Error during execution: {e}", exc_info=True)

@@ -269,7 +269,7 @@ async def run_kulo(args: argparse.Namespace) -> int:
                 exclude_patterns=exclude_patterns,
             )
 
-            if not filtered_pods:
+            if not filtered_pods and not args.follow:
                 ui.print_warning("No pods found matching the specified criteria")
                 return 0
 
@@ -280,7 +280,7 @@ async def run_kulo(args: argparse.Namespace) -> int:
                 exclude_ephemeral=args.exclude_ephemeral,
             )
 
-            if not all_containers:
+            if not all_containers and not args.follow:
                 ui.print_warning("No containers found in matching pods")
                 return 0
 
