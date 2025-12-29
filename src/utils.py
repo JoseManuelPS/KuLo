@@ -377,3 +377,155 @@ def calculate_backoff(retry_count: int, base: float = 1.0, max_backoff: float = 
     delay = base * (2**retry_count)
     return min(delay, max_backoff)
 
+
+# Regex metacharacters that indicate a pattern is a regex
+REGEX_METACHARACTERS = re.compile(r"[.*+?^${}()|[\]\\]")
+
+
+def is_regex_pattern(pattern: str) -> bool:
+    """Check if a string contains regex metacharacters.
+
+    Args:
+        pattern: The string to check.
+
+    Returns:
+        True if the string appears to be a regex pattern.
+
+    Examples:
+        >>> is_regex_pattern('dev-team1')
+        False
+        >>> is_regex_pattern('dev-.*')
+        True
+        >>> is_regex_pattern('^prod$')
+        True
+    """
+    return bool(REGEX_METACHARACTERS.search(pattern))
+
+
+class ColorAssigner:
+    """Deterministic color assigner that avoids repetition.
+
+    Assigns colors to pods in a deterministic way based on sorted pod names,
+    ensuring:
+    - Same pods always get the same colors across executions
+    - No color repetition until the palette is exhausted
+    - Dynamic pods get the next available color
+
+    Attributes:
+        palette: The color palette to use.
+        _assignments: Map of pod names to assigned colors.
+        _used_colors: Set of colors currently in use.
+        _next_index: Index of the next color to assign.
+
+    Example:
+        assigner = ColorAssigner()
+        assigner.initialize(['pod-a', 'pod-b', 'pod-c'])
+        color = assigner.get_color('pod-a')  # Returns first color
+    """
+
+    def __init__(self, palette: list[str] | None = None) -> None:
+        """Initialize the color assigner.
+
+        Args:
+            palette: Optional custom color palette. Uses POD_COLOR_PALETTE if None.
+        """
+        self.palette = palette if palette is not None else POD_COLOR_PALETTE.copy()
+        self._assignments: dict[str, str] = {}
+        self._used_indices: set[int] = set()
+        self._next_index: int = 0
+
+    def initialize(self, pod_names: list[str]) -> None:
+        """Initialize color assignments for a known set of pods.
+
+        Sorts pods alphabetically and assigns colors in order for
+        deterministic results across executions.
+
+        Args:
+            pod_names: List of pod names to assign colors to.
+
+        Example:
+            assigner = ColorAssigner()
+            assigner.initialize(['pod-c', 'pod-a', 'pod-b'])
+            # pod-a gets color[0], pod-b gets color[1], pod-c gets color[2]
+        """
+        self._assignments.clear()
+        self._used_indices.clear()
+        self._next_index = 0
+
+        # Sort pods for deterministic ordering
+        sorted_pods = sorted(pod_names)
+
+        for pod_name in sorted_pods:
+            self._assign_next_color(pod_name)
+
+    def get_color(self, pod_name: str) -> str:
+        """Get the color for a pod, assigning one if needed.
+
+        Args:
+            pod_name: The name of the pod.
+
+        Returns:
+            A Rich-compatible color string.
+
+        Example:
+            color = assigner.get_color('my-pod')
+        """
+        if pod_name not in self._assignments:
+            self._assign_next_color(pod_name)
+
+        return self._assignments[pod_name]
+
+    def _assign_next_color(self, pod_name: str) -> str:
+        """Assign the next available color to a pod.
+
+        Args:
+            pod_name: The name of the pod.
+
+        Returns:
+            The assigned color.
+        """
+        if pod_name in self._assignments:
+            return self._assignments[pod_name]
+
+        # Find the next unused color index
+        color_index = self._next_index % len(self.palette)
+
+        # If we've cycled through all colors, just use the next in sequence
+        # This ensures deterministic behavior even when palette is exhausted
+        if self._next_index < len(self.palette):
+            # Still have unused colors
+            self._used_indices.add(color_index)
+        # else: we're cycling, which is fine
+
+        color = self.palette[color_index]
+        self._assignments[pod_name] = color
+        self._next_index += 1
+
+        return color
+
+    def update_for_new_pod(self, pod_name: str) -> str:
+        """Handle a dynamically discovered pod.
+
+        Assigns the next available color without disrupting existing assignments.
+
+        Args:
+            pod_name: The name of the new pod.
+
+        Returns:
+            The assigned color.
+        """
+        return self.get_color(pod_name)
+
+    @property
+    def assigned_count(self) -> int:
+        """Return the number of pods with assigned colors."""
+        return len(self._assignments)
+
+    def get_all_assignments(self) -> dict[str, str]:
+        """Return a copy of all current color assignments.
+
+        Returns:
+            Dictionary mapping pod names to colors.
+        """
+        return self._assignments.copy()
+

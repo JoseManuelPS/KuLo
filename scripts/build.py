@@ -130,7 +130,7 @@ def run_pyinstaller(
         args.extend(["--exclude-module", module])
 
     # Entry point
-    args.append(str(SRC_DIR / "kulo" / "main.py"))
+    args.append(str(SRC_DIR / "main.py"))
 
     print(f"Building {binary_name}...")
     print(f"Command: {' '.join(args)}")

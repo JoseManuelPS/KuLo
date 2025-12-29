@@ -433,3 +433,24 @@ class KuloClient:
                 return True
             raise KuloClientError(f"Failed to check namespace: {e}") from e
 
+    async def list_all_namespaces(self) -> list[str]:
+        """List all namespaces in the cluster.
+
+        Returns:
+            List of namespace names.
+
+        Raises:
+            PermissionDeniedError: If access to list namespaces is denied.
+            KuloClientError: For other API errors.
+        """
+        try:
+            response = await self.core_api.list_namespace()
+            return [ns.metadata.name for ns in response.items]
+        except ApiException as e:
+            if e.status == 403:
+                raise PermissionDeniedError(
+                    "Permission denied to list namespaces. "
+                    "Use explicit namespace names instead of regex patterns."
+                ) from e
+            raise KuloClientError(f"Failed to list namespaces: {e}") from e
+

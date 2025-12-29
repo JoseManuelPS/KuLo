@@ -18,9 +18,9 @@ from rich.text import Text
 
 from kulo.models import ContainerInfo, LogEntry, PodInfo
 from kulo.utils import (
+    ColorAssigner,
     extract_log_level,
     extract_message,
-    get_color_for_pod,
     get_log_level_color,
 )
 
@@ -63,7 +63,8 @@ class KuloUI:
         self.show_namespace = show_namespace
         self.show_container = show_container
         self.pod_containers: dict[str, int] = {}
-        self._pod_colors: dict[str, str] = {}
+        self._color_assigner = ColorAssigner()
+        self._max_prefix_width: int = 0
 
     def configure_output(
         self,
@@ -73,7 +74,8 @@ class KuloUI:
         """Configure output based on discovered resources.
 
         Automatically hides namespace if single, and container if pods
-        have only one container each.
+        have only one container each. Initializes color assignments for
+        deterministic coloring.
 
         Args:
             namespaces: List of namespaces being observed.
@@ -96,6 +98,13 @@ class KuloUI:
 
         # Show container only if any pod has multiple containers
         self.show_container = any(count > 1 for count in self.pod_containers.values())
+
+        # Initialize color assignments with sorted pod names for deterministic coloring
+        pod_names = [pod.name for pod in pods]
+        self._color_assigner.initialize(pod_names)
+
+        # Calculate maximum prefix width for aligned output
+        self._calculate_max_prefix_width(pods)
 
     def print_summary(
         self,
@@ -219,9 +228,14 @@ class KuloUI:
     def print_new_container(self, container: ContainerInfo) -> None:
         """Print a notification about a newly discovered container.
 
+        Also updates the max prefix width if this container has a longer prefix.
+
         Args:
             container: The new container.
         """
+        # Update prefix width for alignment
+        self.update_prefix_width_for_container(container)
+
         color = self._get_pod_color(container.pod_name)
         self.console.print(
             f"[dim][{color}]➜[/] New container: "
@@ -275,8 +289,10 @@ class KuloUI:
         if self.show_container:
             prefix_parts.append(f"[{entry.container_name}]")
 
-        # Add prefix with pod color
+        # Add prefix with pod color, padded to align with other entries
         prefix = "".join(prefix_parts)
+        if self._max_prefix_width > 0:
+            prefix = prefix.ljust(self._max_prefix_width)
         text.append(prefix, style=pod_color)
         text.append(" | ", style="dim")
 
@@ -409,15 +425,82 @@ class KuloUI:
     def _get_pod_color(self, pod_name: str) -> str:
         """Get or assign a color for a pod.
 
+        Uses the ColorAssigner for deterministic, non-repeating colors.
+
         Args:
             pod_name: The pod name.
 
         Returns:
             A Rich color string.
         """
-        if pod_name not in self._pod_colors:
-            self._pod_colors[pod_name] = get_color_for_pod(pod_name)
-        return self._pod_colors[pod_name]
+        return self._color_assigner.get_color(pod_name)
+
+    def _calculate_prefix_width(
+        self,
+        namespace: str,
+        pod_name: str,
+        container_name: str,
+    ) -> int:
+        """Calculate the width of a log prefix for a specific container.
+
+        Args:
+            namespace: The namespace name.
+            pod_name: The pod name.
+            container_name: The container name.
+
+        Returns:
+            The width of the prefix string (excluding padding).
+        """
+        width = 0
+
+        if self.show_namespace:
+            width += len(f"[{namespace}]")
+
+        width += len(f"[{pod_name}]")
+
+        if self.show_container:
+            width += len(f"[{container_name}]")
+
+        return width
+
+    def _calculate_max_prefix_width(
+        self,
+        pods: list[PodInfo],
+    ) -> None:
+        """Calculate the maximum prefix width across all containers.
+
+        Args:
+            pods: List of pods being observed.
+        """
+        max_width = 0
+
+        for pod in pods:
+            # Get all container names for this pod
+            all_containers = (
+                pod.containers + pod.init_containers + pod.ephemeral_containers
+            )
+
+            for container_name in all_containers:
+                width = self._calculate_prefix_width(
+                    pod.namespace, pod.name, container_name
+                )
+                max_width = max(max_width, width)
+
+        self._max_prefix_width = max_width
+
+    def update_prefix_width_for_container(self, container: ContainerInfo) -> None:
+        """Update the max prefix width if a new container has a longer prefix.
+
+        Called when a new container is discovered dynamically.
+
+        Args:
+            container: The newly discovered container.
+        """
+        width = self._calculate_prefix_width(
+            container.namespace, container.pod_name, container.container_name
+        )
+        if width > self._max_prefix_width:
+            self._max_prefix_width = width
 
     def _get_phase_style(self, phase: str) -> str:
         """Get the style for a pod phase.

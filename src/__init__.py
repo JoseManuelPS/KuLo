@@ -5,4 +5,3 @@ superior Kubernetes log visualization.
 """
 
 __version__ = "0.1.0"
-__author__ = "KuLo Contributors"

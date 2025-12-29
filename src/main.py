@@ -23,6 +23,7 @@ from kulo.ui import KuloUI
 from kulo.utils import (
     DurationParseError,
     compile_patterns,
+    is_regex_pattern,
     matches_any,
     parse_duration,
     parse_namespaces,
@@ -56,6 +57,7 @@ def create_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  kulo                           # Logs from current namespace\n"
             "  kulo -n frontend,backend       # Multiple namespaces\n"
+            "  kulo -n 'dev-.*'               # Namespaces matching regex\n"
             "  kulo -l app=web -f             # Follow pods with label\n"
             "  kulo -i 'api-.*' -e 'test-.*'  # Include/exclude by regex\n"
             "  kulo -s 1h -t 100              # Last hour, 100 lines\n"
@@ -75,7 +77,7 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="NS",
-        help="Comma-separated list of namespaces (default: current context)",
+        help="Comma-separated list of namespaces or regex patterns (default: current context)",
     )
 
     # Label selector
@@ -221,18 +223,31 @@ async def run_kulo(args: argparse.Namespace) -> int:
     # Connect to Kubernetes
     try:
         async with KuloClient.create() as client:
-            # Resolve namespaces
-            namespaces = parse_namespaces(args.namespace)
-            if not namespaces:
+            # Resolve namespaces (supports both exact names and regex patterns)
+            namespace_args = parse_namespaces(args.namespace)
+            if not namespace_args:
                 # Use current context namespace
                 current_ns = await client.get_current_namespace()
                 namespaces = [current_ns]
+            else:
+                # Check if any namespace arg contains regex patterns
+                has_regex = any(is_regex_pattern(ns) for ns in namespace_args)
 
-            # Validate namespaces exist
-            for ns in namespaces:
-                if not await client.check_namespace_exists(ns):
-                    ui.print_error(f"Namespace '{ns}' does not exist")
-                    return 1
+                if has_regex:
+                    # Resolve regex patterns against all cluster namespaces
+                    namespaces = await resolve_namespace_patterns(
+                        client, namespace_args, ui
+                    )
+                    if not namespaces:
+                        return 1  # Error already printed
+                else:
+                    # Exact namespace names - validate they exist
+                    namespaces = []
+                    for ns in namespace_args:
+                        if not await client.check_namespace_exists(ns):
+                            ui.print_error(f"Namespace '{ns}' does not exist")
+                            return 1
+                        namespaces.append(ns)
 
             # Discover pods
             all_pods: list[PodInfo] = []
@@ -371,6 +386,72 @@ def get_containers(
         containers.extend(pod_containers)
 
     return containers
+
+
+async def resolve_namespace_patterns(
+    client: KuloClient,
+    namespace_args: list[str],
+    ui: KuloUI,
+) -> list[str]:
+    """Resolve namespace arguments that may contain regex patterns.
+
+    For exact namespace names, validates they exist.
+    For regex patterns, lists all namespaces and filters by matching patterns.
+
+    Args:
+        client: The KuloClient instance.
+        namespace_args: List of namespace names or regex patterns.
+        ui: The UI instance for error reporting.
+
+    Returns:
+        List of resolved namespace names, or empty list on error.
+    """
+    import re
+
+    # Separate exact names from regex patterns
+    exact_names: list[str] = []
+    regex_patterns: list[re.Pattern[str]] = []
+
+    for ns_arg in namespace_args:
+        if is_regex_pattern(ns_arg):
+            try:
+                regex_patterns.append(re.compile(ns_arg, re.IGNORECASE))
+            except re.error as e:
+                ui.print_error(f"Invalid namespace regex pattern '{ns_arg}': {e}")
+                return []
+        else:
+            exact_names.append(ns_arg)
+
+    resolved: list[str] = []
+
+    # Validate exact names exist
+    for ns in exact_names:
+        if not await client.check_namespace_exists(ns):
+            ui.print_error(f"Namespace '{ns}' does not exist")
+            return []
+        resolved.append(ns)
+
+    # Resolve regex patterns by listing all namespaces
+    if regex_patterns:
+        try:
+            all_namespaces = await client.list_all_namespaces()
+        except PermissionDeniedError as e:
+            ui.print_error(str(e))
+            return []
+
+        for ns in all_namespaces:
+            # Skip if already in resolved (from exact match)
+            if ns in resolved:
+                continue
+
+            # Check if matches any pattern
+            if any(pattern.search(ns) for pattern in regex_patterns):
+                resolved.append(ns)
+
+    if not resolved:
+        ui.print_warning("No namespaces found matching the specified patterns")
+
+    return resolved
 
 
 def main() -> NoReturn:

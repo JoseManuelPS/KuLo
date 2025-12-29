@@ -1,13 +1,13 @@
 # KuLo - Agent Documentation
 
-> This document is optimized for AI reasoning models (Claude, GPT-4, Gemini) to understand,
+> This document is optimized for AI reasoning models (Claude, GPT-5, Gemini) to understand,
 > maintain, and extend the KuLo codebase without breaking concurrency or architecture patterns.
 
 ## Project Mind Map
 
 ```
 kulo/
-├── src/kulo/
+├── src/
 │   ├── main.py      ─────────────────────┐
 │   │   • CLI entry point (argparse)      │
 │   │   • Argument validation             │
@@ -27,13 +27,15 @@ kulo/
 │   ├── ui.py        ◄────────────────────┤ imports
 │   │   • KuloUI (Rich console)           │
 │   │   • JSON log detection              │
-│   │   • Color management                │
+│   │   • ColorAssigner integration       │
+│   │   • Prefix alignment (padding)      │
 │   │   • Smart field omission            │
 │   │                                     │
 │   ├── utils.py     ◄────────────────────┘ imports
 │   │   • Duration parsing (10s → 10)
 │   │   • Regex compilation
-│   │   • Color assignment (hash-based)
+│   │   • ColorAssigner (deterministic)
+│   │   • Namespace regex detection
 │   │   • Backoff calculation
 │   │
 │   └── models.py
@@ -172,6 +174,60 @@ async def create(cls) -> AsyncIterator[Self]:
 ```
 
 **Warning**: Failing to close `api_client` causes resource leaks and socket exhaustion.
+
+### 5. Deterministic Color Assignment (ColorAssigner)
+
+```python
+class ColorAssigner:
+    def initialize(self, pod_names: list[str]) -> None:
+        # Sort pods alphabetically for deterministic ordering
+        sorted_pods = sorted(pod_names)
+        for pod_name in sorted_pods:
+            self._assign_next_color(pod_name)
+
+    def get_color(self, pod_name: str) -> str:
+        if pod_name not in self._assignments:
+            self._assign_next_color(pod_name)  # Dynamic pods
+        return self._assignments[pod_name]
+```
+
+**Why this design**:
+- **Deterministic**: Same pods always get same colors across executions
+- **No repetition**: Colors are assigned sequentially, avoiding collisions
+- **Dynamic support**: New pods get the next available color
+
+### 6. Prefix Alignment for Readable Output
+
+```python
+# In configure_output():
+self._calculate_max_prefix_width(namespaces, pods)
+
+# In _format_log_line():
+prefix = "".join(prefix_parts)
+if self._max_prefix_width > 0:
+    prefix = prefix.ljust(self._max_prefix_width)  # Pad to align
+```
+
+This ensures all log lines align regardless of pod/container name lengths.
+
+### 7. Namespace Regex Resolution
+
+```python
+# In main.py:
+if any(is_regex_pattern(ns) for ns in namespace_args):
+    namespaces = await resolve_namespace_patterns(client, namespace_args, ui)
+else:
+    # Validate exact names exist
+    for ns in namespace_args:
+        if not await client.check_namespace_exists(ns):
+            ui.print_error(f"Namespace '{ns}' does not exist")
+
+# Detection uses regex metacharacters: .*+?^${}()|[]\
+def is_regex_pattern(pattern: str) -> bool:
+    return bool(REGEX_METACHARACTERS.search(pattern))
+```
+
+**Important**: Regex resolution requires `list namespaces` permission. Falls back to error if denied.
 
 ## Maintenance Protocols
 
