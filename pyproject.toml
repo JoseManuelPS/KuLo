@@ -1,6 +1,6 @@
 [project]
 name = "kulo"
-version = "0.1.0"
+version = "1.0.0"
 description = "KuLo - Kubernetes Log Aggregator: Visualize K8s logs in an aggregated, filterable, and aesthetically superior manner"
 readme = "README.md"
 license = { file = "LICENSE" }
