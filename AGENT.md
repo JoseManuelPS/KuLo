@@ -11,7 +11,29 @@ kulo/
 │   ├── main.py      ─────────────────────┐
 │   │   • CLI entry point (argparse)      │
 │   │   • Argument validation             │
+│   │   • TUI/CLI mode selection          │
 │   │   • Orchestration flow              │
+│   │                                     │
+│   ├── app.py       ◄────────────────────┤ imports (TUI)
+│   │   • KuloApp (Textual Application)   │
+│   │   • Vim-style keybindings           │
+│   │   • Modal handling                  │
+│   │   • Streaming integration           │
+│   │                                     │
+│   ├── state.py     ◄────────────────────┤ imports (TUI)
+│   │   • AppState (reactive state)       │
+│   │   • Filter management               │
+│   │   • Pod activation tracking         │
+│   │                                     │
+│   ├── widgets/     ◄────────────────────┤ imports (TUI)
+│   │   • LogPanel (RichLog-based)        │
+│   │   • PodLegend (interactive list)    │
+│   │   • HelpBar (keybinding hints)      │
+│   │                                     │
+│   ├── modals/      ◄────────────────────┤ imports (TUI)
+│   │   • NamespaceModal                  │
+│   │   • FilterModal (include/exclude)   │
+│   │   • ConfirmModal                    │
 │   │                                     │
 │   ├── client.py    ◄────────────────────┤ imports
 │   │   • KuloClient (async context mgr)  │
@@ -23,8 +45,9 @@ kulo/
 │   │   • asyncio.Queue coordination      │
 │   │   • Signal handling (SIGINT)        │
 │   │   • Pod rotation watching           │
+│   │   • LogRenderer protocol            │
 │   │                                     │
-│   ├── ui.py        ◄────────────────────┤ imports
+│   ├── ui.py        ◄────────────────────┤ imports (CLI)
 │   │   • KuloUI (Rich console)           │
 │   │   • JSON log detection              │
 │   │   • ColorAssigner integration       │
@@ -45,6 +68,7 @@ kulo/
 │
 └── tests/
     ├── test_unit.py   (mock-based, no network)
+    ├── test_tui.py    (TUI component tests)
     └── test_e2e.py    (real cluster, @pytest.mark.e2e)
 ```
 
@@ -87,6 +111,46 @@ from multiple containers simultaneously, this would require threads and complex 
 - Exception in one stream would affect others
 
 **Solution**: Producers push to queue, single consumer renders. They are fully decoupled.
+
+### TUI Architecture (Textual)
+
+KuLo supports an interactive TUI mode using the Textual framework:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          KuloApp (Textual)                          │
+│  ┌───────────────────────────────────┬───────────────────────────┐  │
+│  │           LogPanel                │       PodLegend           │  │
+│  │    (RichLog widget, scrollable)   │   (OptionList widget)     │  │
+│  │                                   │   • ● pod-a (enabled)     │  │
+│  │  [api][main] | Request received   │   • ○ pod-b (disabled)    │  │
+│  │  [web][nginx] | GET /index 200    │   • ● pod-c (enabled)     │  │
+│  │                                   │                           │  │
+│  └───────────────────────────────────┴───────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  [n] Namespace  [i] Include  [e] Exclude  [p] Pods  [q] Quit  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                              HelpBar                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key TUI Components:**
+
+1. **AppState** (`state.py`): Centralized reactive state for filters and pod activation
+2. **LogPanel** (`widgets/log_panel.py`): Virtual-scrolling log display with pod filtering
+3. **PodLegend** (`widgets/pod_legend.py`): Interactive pod list with toggle functionality
+4. **HelpBar** (`widgets/help_bar.py`): Keybinding hints and mode indicator
+5. **Modals** (`modals/`): Input dialogs for filter editing
+
+**Mode Selection Logic:**
+
+```python
+# In main.py
+def should_use_tui(args) -> bool:
+    if args.tui:      return True   # --tui forces TUI
+    if args.no_tui:   return False  # --no-tui forces CLI
+    return args.follow              # Default: TUI for follow mode
+```
 
 ### Concurrency Model
 
@@ -210,7 +274,27 @@ if self._max_prefix_width > 0:
 
 This ensures all log lines align regardless of pod/container name lengths.
 
-### 7. Namespace Regex Resolution
+### 8. LogRenderer Protocol for UI Abstraction
+
+```python
+# In manager.py
+@runtime_checkable
+class LogRenderer(Protocol):
+    def print_log_entry(self, entry: LogEntry) -> None:
+        ...
+
+# LogManager accepts any UI implementing the protocol
+async def run(self, ui: "KuloUI | LogRenderer", ...):
+    ...
+```
+
+**Why this design**:
+- **Decoupling**: Manager doesn't depend on specific UI implementation
+- **TUI support**: KuloApp implements `print_log_entry()` for TUI rendering
+- **CLI support**: KuloUI implements it for Rich console output
+- **Testability**: Easy to mock for unit tests
+
+### 9. Namespace Regex Resolution
 
 ```python
 # In main.py:
@@ -311,6 +395,14 @@ Common issues:
   - `models.py`: 100%
   - `ui.py` (formatting logic): 90%+
 
+### TUI Tests (test_tui.py)
+
+- **Tests TUI components in isolation**: No terminal required
+- **AppState tests**: State management, pod toggling, filtering
+- **Widget tests**: LogPanel formatting, PodLegend display
+- **Modal tests**: Input handling, validation
+- **Mode selection tests**: TUI vs CLI flag logic
+
 ### E2E Tests (test_e2e.py)
 
 - **Requires real cluster**: kind or minikube
@@ -394,4 +486,70 @@ async with KuloClient.create() as client:
 1. Add counters to `LogManager` (lines received, errors, reconnections)
 2. Expose via optional metrics endpoint or periodic log summary
 3. Consider prometheus_client for structured metrics
+
+### Adding New TUI Keybindings
+
+Chain of thought:
+
+1. **Define binding in `app.py:BINDINGS`**:
+   ```python
+   BINDINGS = [
+       ...
+       Binding("x", "my_action", "Description", show=True),
+   ]
+   ```
+
+2. **Implement action handler**:
+   ```python
+   def action_my_action(self) -> None:
+       # Handle the action
+       self.notify("Action triggered")
+   ```
+
+3. **Update HelpBar if needed**:
+   - Add to `help_bar.py:KEYBINDINGS` for visibility
+   - Update `ExpandedHelp.HELP_TEXT` for documentation
+
+4. **Add tests to `test_tui.py`**
+
+### Adding New TUI Modals
+
+Chain of thought:
+
+1. **Create modal class in `modals/`**:
+   - Extend `ModalScreen[ReturnType]`
+   - Define CSS for styling
+   - Implement `compose()` for layout
+   - Handle input validation
+
+2. **Register in `modals/__init__.py`**
+
+3. **Add keybinding to open modal in `app.py`**
+
+4. **Handle modal result**:
+   ```python
+   async def action_my_filter(self) -> None:
+       result = await self.push_screen_wait(MyModal(...))
+       if result is not None:
+           # Apply changes
+           await self._restart_streaming()
+   ```
+
+### Modifying TUI Widgets
+
+Chain of thought:
+
+1. **For LogPanel changes**:
+   - Preserve `_format_log_line()` signature for compatibility
+   - Test with both active and inactive pods
+   - Ensure filtering works with state changes
+
+2. **For PodLegend changes**:
+   - Update `_format_pod_option()` for visual changes
+   - Emit `PodToggled` message for state sync
+   - Call `refresh_pods()` after state updates
+
+3. **For HelpBar changes**:
+   - Keep keybindings list in sync with `app.py:BINDINGS`
+   - Update both compact and expanded help
 

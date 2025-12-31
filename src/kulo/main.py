@@ -2,6 +2,10 @@
 
 Entry point and CLI argument parsing for the KuLo application.
 Orchestrates client, manager, and UI components.
+
+Supports two modes:
+- TUI Mode (default with -f): Interactive Textual-based interface
+- CLI Mode (--no-tui or snapshot): Classic Rich-based output
 """
 
 import argparse
@@ -157,6 +161,19 @@ def create_parser() -> argparse.ArgumentParser:
         action="count",
         default=0,
         help="Increase verbosity (-v for info, -vv for debug)",
+    )
+
+    # UI mode
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Use classic CLI output instead of interactive TUI (default for snapshot mode)",
+    )
+
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Force interactive TUI mode even in snapshot mode",
     )
 
     return parser
@@ -454,6 +471,75 @@ async def resolve_namespace_patterns(
     return resolved
 
 
+def should_use_tui(args: argparse.Namespace) -> bool:
+    """Determine if TUI mode should be used.
+
+    TUI mode is used when:
+    - --tui flag is explicitly set, OR
+    - Following logs (-f) AND --no-tui is not set
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        True if TUI mode should be used.
+    """
+    # Explicit flags take precedence
+    if args.tui:
+        return True
+    if args.no_tui:
+        return False
+
+    # Default: TUI for follow mode, CLI for snapshot mode
+    return args.follow
+
+
+def run_tui_mode(args: argparse.Namespace) -> int:
+    """Run KuLo in interactive TUI mode.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors).
+    """
+    from kulo.app import run_tui
+
+    # Parse arguments
+    try:
+        since_seconds = parse_duration(args.since)
+    except DurationParseError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        label_selector = validate_label_selector(args.label_selector)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    # Parse namespaces
+    namespaces = parse_namespaces(args.namespace)
+
+    try:
+        run_tui(
+            namespaces=namespaces or None,
+            include_pattern=args.include or "",
+            exclude_pattern=args.exclude or "",
+            label_selector=label_selector or "",
+            follow=args.follow,
+            since_seconds=since_seconds,
+            tail_lines=args.tail,
+            max_containers=args.max_containers,
+        )
+        return 0
+    except KeyboardInterrupt:
+        return 130
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main() -> NoReturn:
     """CLI entry point."""
     parser = create_parser()
@@ -461,11 +547,15 @@ def main() -> NoReturn:
 
     configure_logging(args.verbose)
 
-    try:
-        exit_code = asyncio.run(run_kulo(args))
-    except KeyboardInterrupt:
-        print("\nInterrupted")
-        exit_code = 130
+    # Choose mode based on arguments
+    if should_use_tui(args):
+        exit_code = run_tui_mode(args)
+    else:
+        try:
+            exit_code = asyncio.run(run_kulo(args))
+        except KeyboardInterrupt:
+            print("\nInterrupted")
+            exit_code = 130
 
     sys.exit(exit_code)
 

@@ -3,10 +3,11 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**KuLo** is a professional CLI tool for aggregated, filterable, and aesthetically superior Kubernetes log visualization. Built with async I/O for real concurrent streaming from multiple pods and containers.
+**KuLo** is a professional CLI tool for aggregated, filterable, and aesthetically superior Kubernetes log visualization. Built with async I/O for real concurrent streaming from multiple pods and containers. Features an **interactive TUI mode** (similar to K9s) for real-time log exploration.
 
 ## Features
 
+- **Interactive TUI Mode** - K9s-style interface with keybindings, pod panel, and live filter editing
 - **Aggregated Log Streaming** - View logs from multiple pods/containers in a single unified stream
 - **Smart JSON Detection** - Automatically parse JSON logs, extract log levels, and apply color coding
 - **Server-side Filtering** - Use Kubernetes label selectors for efficient pod selection
@@ -71,8 +72,14 @@ kulo -n frontend,backend
 kulo -n 'dev-.*'              # All dev-* namespaces
 kulo -n 'prod,staging-.*'     # Mix exact names and patterns
 
-# Follow logs in real-time
+# Follow logs in real-time (opens interactive TUI by default)
 kulo -f
+
+# Follow with classic CLI output (no TUI)
+kulo -f --no-tui
+
+# Force TUI mode even for snapshot
+kulo --tui
 
 # Filter by label selector (server-side, efficient)
 kulo -l app=web,tier=frontend
@@ -93,6 +100,45 @@ kulo -s 1h -t 100
 kulo --max-containers 20
 ```
 
+## Interactive TUI Mode
+
+When using follow mode (`-f`), KuLo launches an interactive terminal interface inspired by K9s:
+
+```
+┌─────────────────────────────────────────────┬────────────────────┐
+│ [api-server][main] | Request received       │ ● api-server       │
+│ [api-server][main] | Processing user 123    │ ● web-frontend     │
+│ [web-frontend][nginx] | GET /index.html 200 │ ○ worker-batch     │
+│ [api-server][main] | Response sent in 45ms  │                    │
+└─────────────────────────────────────────────┴────────────────────┘
+ [n] Namespace  [i] Include  [e] Exclude  [p] Pods  [?] Help  [q] Quit
+```
+
+### TUI Keybindings
+
+| Key | Action |
+|-----|--------|
+| `n` | Change namespace filter (supports regex) |
+| `i` | Set include pattern for pod names |
+| `e` | Set exclude pattern for pod names |
+| `l` | Set Kubernetes label selector |
+| `p` | Toggle pod panel visibility |
+| `a` | Enable all pods |
+| `z` | Disable all pods |
+| `c` | Clear log display |
+| `s` | Toggle auto-scroll |
+| `?` | Show/hide expanded help |
+| `q` | Quit application |
+| `Esc` | Close modal/overlay |
+
+### Pod Panel
+
+The right panel shows all discovered pods with their assigned colors:
+- **● Filled circle**: Pod is active (logs shown)
+- **○ Empty circle**: Pod is disabled (logs hidden)
+
+Click on a pod or press Enter to toggle its visibility.
+
 ## CLI Reference
 
 | Argument | Alias | Type | Default | Description |
@@ -103,10 +149,12 @@ kulo --max-containers 20
 | `--exclude` | `-e` | str | - | Exclude pods matching regex (comma-separated) |
 | `--exclude-init` | - | flag | false | Omit init containers |
 | `--exclude-ephemeral` | - | flag | false | Omit ephemeral containers |
-| `--follow` | `-f` | flag | false | Real-time streaming mode |
+| `--follow` | `-f` | flag | false | Real-time streaming mode (TUI by default) |
 | `--since` | `-s` | str | 10m | Time window (e.g., 30s, 5m, 1h, 2d) |
 | `--tail` | `-t` | int | 25 | Initial lines per container |
 | `--max-containers` | - | int | 10 | Maximum concurrent streams |
+| `--tui` | - | flag | false | Force interactive TUI mode |
+| `--no-tui` | - | flag | false | Use classic CLI output (no TUI) |
 | `--verbose` | `-v` | flag | false | Increase verbosity (-v, -vv) |
 
 ## Output Format
@@ -226,16 +274,20 @@ KuLo uses a **Producer-Consumer** pattern for efficient log streaming:
                                                 │   (UI render)   │
                                                 └────────┬────────┘
                                                          │
-                                                         v
-                                                ┌─────────────────┐
-                                                │   Rich Console  │
-                                                └─────────────────┘
+                              ┌───────────────────┬──────┴──────┐
+                              │                   │             │
+                              v                   v             v
+                     ┌─────────────────┐ ┌─────────────┐ ┌────────────┐
+                     │  TUI (Textual)  │ │  CLI (Rich) │ │  Pod Panel │
+                     │   Log Panel     │ │   Console   │ │  Help Bar  │
+                     └─────────────────┘ └─────────────┘ └────────────┘
 ```
 
 This architecture:
 - Prevents UI blocking from network I/O
 - Enables true concurrent streaming from multiple containers
 - Handles reconnection and pod rotation gracefully
+- Supports both interactive TUI and classic CLI output modes
 
 See [AGENT.md](AGENT.md) for detailed architecture documentation.
 

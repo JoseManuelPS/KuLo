@@ -2,7 +2,7 @@
 
 This module coordinates:
 - Producer tasks that read from Kubernetes log streams
-- A single consumer task that updates the Rich UI
+- A single consumer task that updates the UI (Rich or Textual TUI)
 - Pod rotation detection in follow mode
 - Graceful shutdown via signals
 
@@ -14,7 +14,7 @@ import logging
 import signal
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from kulo.client import KuloClient, PodNotFoundError
 from kulo.models import ContainerInfo, LogEntry, PodInfo, StreamContext
@@ -22,6 +22,22 @@ from kulo.models import ContainerInfo, LogEntry, PodInfo, StreamContext
 
 if TYPE_CHECKING:
     from kulo.ui import KuloUI
+
+
+@runtime_checkable
+class LogRenderer(Protocol):
+    """Protocol for objects that can render log entries.
+
+    Supports both the classic KuloUI and the new KuloApp TUI.
+    """
+
+    def print_log_entry(self, entry: LogEntry) -> None:
+        """Render a log entry.
+
+        Args:
+            entry: The log entry to render.
+        """
+        ...
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +87,7 @@ class LogManager:
     async def run(
         self,
         containers: list[ContainerInfo],
-        ui: "KuloUI",
+        ui: "KuloUI | LogRenderer",
         follow: bool = False,
         since_seconds: int = 600,
         tail_lines: int = 25,
@@ -87,7 +103,7 @@ class LogManager:
 
         Args:
             containers: List of containers to stream logs from.
-            ui: The KuloUI instance for rendering.
+            ui: The UI instance for rendering (KuloUI or KuloApp TUI).
             follow: Whether to follow logs in real-time.
             since_seconds: Time window for log retrieval.
             tail_lines: Number of initial lines to fetch.
@@ -230,11 +246,11 @@ class LogManager:
             except Exception as e:
                 logger.error(f"Producer error for {container.unique_id}: {e}")
 
-    async def _consume_logs(self, ui: "KuloUI") -> None:
+    async def _consume_logs(self, ui: "KuloUI | LogRenderer") -> None:
         """Consumer coroutine that renders log entries.
 
         Args:
-            ui: The KuloUI instance for rendering.
+            ui: The UI instance for rendering (KuloUI or KuloApp TUI).
         """
         try:
             while True:
