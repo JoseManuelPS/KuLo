@@ -29,37 +29,44 @@ class TestAppState:
         state = AppState()
 
         assert state.namespaces == []
-        assert state.include_pattern == ""
+        assert state.filter_pattern == ""
         assert state.exclude_pattern == ""
         assert state.label_selector == ""
         assert state.active_pods == {}
         assert state.pods_info == []
-        assert state.follow_mode is True
         assert state.since_seconds == 600
         assert state.tail_lines == 25
         assert state.max_containers == 10
+        assert state.is_paused is False
+        assert state.no_color_logs is False
 
     def test_custom_initialization(self) -> None:
         """Test state with custom values."""
         state = AppState(
             namespaces=["default", "kube-system"],
-            include_pattern="api-.*",
+            filter_pattern="api-.*",
             exclude_pattern="test-.*",
             label_selector="app=web",
-            follow_mode=False,
             since_seconds=3600,
             tail_lines=100,
             max_containers=20,
+            no_color_logs=True,
         )
 
         assert state.namespaces == ["default", "kube-system"]
-        assert state.include_pattern == "api-.*"
+        assert state.filter_pattern == "api-.*"
         assert state.exclude_pattern == "test-.*"
         assert state.label_selector == "app=web"
-        assert state.follow_mode is False
         assert state.since_seconds == 3600
         assert state.tail_lines == 100
         assert state.max_containers == 20
+        assert state.no_color_logs is True
+
+    def test_max_containers_zero_unlimited(self) -> None:
+        """Test that max_containers=0 is accepted (unlimited mode)."""
+        state = AppState(max_containers=0)
+
+        assert state.max_containers == 0
 
     def test_update_pods(self) -> None:
         """Test updating pods list."""
@@ -174,7 +181,7 @@ class TestAppState:
         """Test creating a copy with overrides."""
         state = AppState(
             namespaces=["default"],
-            include_pattern="api-.*",
+            filter_pattern="api-.*",
             exclude_pattern="test-.*",
             label_selector="app=web",
         )
@@ -184,12 +191,24 @@ class TestAppState:
         new_state = state.copy_with(namespaces=["production"])
 
         assert new_state.namespaces == ["production"]
-        assert new_state.include_pattern == "api-.*"  # Preserved
+        assert new_state.filter_pattern == "api-.*"  # Preserved
         assert new_state.exclude_pattern == "test-.*"  # Preserved
         assert new_state.active_pods == {"pod-a": True}  # Preserved
 
         # Original unchanged
         assert state.namespaces == ["default"]
+
+    def test_is_paused_toggle(self) -> None:
+        """Test that is_paused can be toggled."""
+        state = AppState()
+
+        assert state.is_paused is False
+
+        state.is_paused = True
+        assert state.is_paused is True
+
+        state.is_paused = False
+        assert state.is_paused is False
 
 
 # ============================================================================
@@ -319,6 +338,63 @@ class TestLogPanel:
         panel.add_log_entry(entry_b)
         assert not panel.write.called  # Should be filtered
 
+    def test_no_color_logs_disables_coloring(self) -> None:
+        """Test that no_color_logs disables log coloring in LogPanel."""
+        from kulo.widgets.log_panel import LogPanel
+
+        state = AppState(no_color_logs=True)
+        pods = [PodInfo(namespace="default", name="my-pod", phase="Running", containers=["main"])]
+        state.update_pods(pods)
+
+        panel = LogPanel(state=state)
+
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name="my-pod",
+            container_name="main",
+            message="Plain log message",
+        )
+
+        formatted = panel._format_log_line(entry)
+        assert "Plain log message" in formatted.plain
+
+        # Test JSON log
+        entry2 = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name="my-pod",
+            container_name="main",
+            message='{"level":"ERROR","msg":"Error occurred"}',
+        )
+
+        formatted2 = panel._format_log_line(entry2)
+        assert "[ERROR]" in formatted2.plain
+        assert "Error occurred" in formatted2.plain
+
+    def test_json_log_uses_pod_color_for_message(self) -> None:
+        """Test that JSON logs use pod color for message, level color for tag."""
+        from kulo.widgets.log_panel import LogPanel
+
+        state = AppState()
+        pods = [PodInfo(namespace="default", name="api-pod", phase="Running", containers=["main"])]
+        state.update_pods(pods)
+
+        panel = LogPanel(state=state)
+
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name="api-pod",
+            container_name="main",
+            message='{"level":"INFO","msg":"Request received"}',
+        )
+
+        formatted = panel._format_log_line(entry)
+        # Should contain both [INFO] tag and message
+        assert "[INFO]" in formatted.plain
+        assert "Request received" in formatted.plain
+
 
 # ============================================================================
 # PodLegend Tests
@@ -442,9 +518,30 @@ class TestHelpBar:
 
         assert len(bar.KEYBINDINGS) > 0
         assert any(k == "n" for k, _ in bar.KEYBINDINGS)  # Namespace
-        assert any(k == "i" for k, _ in bar.KEYBINDINGS)  # Include
+        assert any(k == "f" for k, _ in bar.KEYBINDINGS)  # Filter
         assert any(k == "e" for k, _ in bar.KEYBINDINGS)  # Exclude
         assert any(k == "q" for k, _ in bar.KEYBINDINGS)  # Quit
+        assert any(k == "Space" for k, _ in bar.KEYBINDINGS)  # Pause
+
+    def test_pause_keybinding_present(self) -> None:
+        """Test that Space/Pause keybinding is properly defined."""
+        from kulo.widgets.help_bar import HelpBar
+
+        bar = HelpBar()
+
+        space_binding = next((k, v) for k, v in bar.KEYBINDINGS if k == "Space")
+        assert space_binding is not None
+        assert space_binding[1] == "Pause"
+
+    def test_filter_keybinding_present(self) -> None:
+        """Test that f/Filter keybinding is properly defined."""
+        from kulo.widgets.help_bar import HelpBar
+
+        bar = HelpBar()
+
+        filter_binding = next((k, v) for k, v in bar.KEYBINDINGS if k == "f")
+        assert filter_binding is not None
+        assert filter_binding[1] == "Filter"
 
 
 class TestExpandedHelp:
@@ -458,6 +555,16 @@ class TestExpandedHelp:
 
         assert len(help_widget.HELP_TEXT) > 0
         assert "Keyboard Shortcuts" in help_widget.HELP_TEXT
+
+    def test_help_text_contains_streaming_control(self) -> None:
+        """Test that help text includes streaming control section."""
+        from kulo.widgets.help_bar import ExpandedHelp
+
+        help_widget = ExpandedHelp()
+
+        assert "Streaming Control" in help_widget.HELP_TEXT
+        assert "Space" in help_widget.HELP_TEXT
+        assert "Pause/resume" in help_widget.HELP_TEXT
 
 
 # ============================================================================
@@ -480,13 +587,13 @@ class TestNamespaceModal:
 class TestFilterModal:
     """Tests for the FilterModal."""
 
-    def test_include_config(self) -> None:
-        """Test include filter configuration."""
+    def test_filter_config(self) -> None:
+        """Test filter configuration."""
         from kulo.modals.filter_modal import FilterModal
 
-        modal = FilterModal(filter_type="include", current_value="api-.*")
+        modal = FilterModal(filter_type="filter", current_value="api-.*")
 
-        assert modal._filter_type == "include"
+        assert modal._filter_type == "filter"
         assert modal._current == "api-.*"
         assert modal._config["is_regex"] is True
 
@@ -508,6 +615,14 @@ class TestFilterModal:
         assert modal._filter_type == "label"
         assert modal._current == "app=web"
         assert modal._config["is_regex"] is False
+
+    def test_default_filter_type(self) -> None:
+        """Test that default filter type is 'filter'."""
+        from kulo.modals.filter_modal import FilterModal
+
+        modal = FilterModal(current_value="test-.*")
+
+        assert modal._filter_type == "filter"
 
 
 class TestConfirmModal:
@@ -531,53 +646,77 @@ class TestConfirmModal:
 
 
 # ============================================================================
-# Main TUI Mode Selection Tests
+# Mode Selection Tests
 # ============================================================================
 
 
-class TestTuiModeSelection:
-    """Tests for TUI mode selection logic."""
+class TestModeSelection:
+    """Tests for mode selection logic."""
 
-    def test_should_use_tui_with_follow(self) -> None:
-        """Test that TUI is used by default with -f."""
+    def test_default_is_follow_mode(self) -> None:
+        """Test that default mode is follow (TUI) when --snap is not set."""
         from argparse import Namespace
-        from kulo.main import should_use_tui
+        from kulo.main import is_snapshot_mode
 
-        args = Namespace(follow=True, tui=False, no_tui=False)
-        assert should_use_tui(args) is True
+        args = Namespace(snap=False)
+        assert is_snapshot_mode(args) is False
 
-    def test_should_use_cli_without_follow(self) -> None:
-        """Test that CLI is used by default without -f."""
+    def test_snap_flag_enables_snapshot_mode(self) -> None:
+        """Test that --snap enables snapshot mode."""
         from argparse import Namespace
-        from kulo.main import should_use_tui
+        from kulo.main import is_snapshot_mode
 
-        args = Namespace(follow=False, tui=False, no_tui=False)
-        assert should_use_tui(args) is False
+        args = Namespace(snap=True)
+        assert is_snapshot_mode(args) is True
 
-    def test_force_tui_with_flag(self) -> None:
-        """Test that --tui forces TUI mode."""
-        from argparse import Namespace
-        from kulo.main import should_use_tui
+    def test_cli_parser_snap_argument(self) -> None:
+        """Test that CLI parser accepts --snap argument."""
+        from kulo.main import create_parser
 
-        args = Namespace(follow=False, tui=True, no_tui=False)
-        assert should_use_tui(args) is True
+        parser = create_parser()
+        args = parser.parse_args(["--snap"])
+        assert args.snap is True
 
-    def test_force_cli_with_flag(self) -> None:
-        """Test that --no-tui forces CLI mode."""
-        from argparse import Namespace
-        from kulo.main import should_use_tui
+    def test_cli_parser_default_no_snap(self) -> None:
+        """Test that --snap defaults to False."""
+        from kulo.main import create_parser
 
-        args = Namespace(follow=True, tui=False, no_tui=True)
-        assert should_use_tui(args) is False
+        parser = create_parser()
+        args = parser.parse_args([])
+        assert args.snap is False
 
-    def test_tui_flag_takes_precedence(self) -> None:
-        """Test that --tui takes precedence over --no-tui."""
-        from argparse import Namespace
-        from kulo.main import should_use_tui
+    def test_cli_parser_filter_argument(self) -> None:
+        """Test that CLI parser accepts -f/--filter argument."""
+        from kulo.main import create_parser
 
-        args = Namespace(follow=False, tui=True, no_tui=True)
-        # --tui should win
-        assert should_use_tui(args) is True
+        parser = create_parser()
+
+        # Test short form
+        args = parser.parse_args(["-f", "api-.*"])
+        assert args.filter == "api-.*"
+
+        # Test long form
+        args = parser.parse_args(["--filter", "web-.*"])
+        assert args.filter == "web-.*"
+
+    def test_cli_parser_no_follow_or_tui_flags(self) -> None:
+        """Test that --follow, --tui, --no-tui flags are removed."""
+        from kulo.main import create_parser
+
+        parser = create_parser()
+
+        # These should not be recognized anymore
+        import argparse
+
+        # --follow should fail (we're using -f for --filter now)
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--follow"])
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--tui"])
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--no-tui"])
 
 
 # ============================================================================

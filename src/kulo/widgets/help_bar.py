@@ -25,8 +25,9 @@ class HelpBar(Static):
 
     # Default keybindings to display
     KEYBINDINGS = [
+        ("Space", "Pause"),
         ("n", "Namespace"),
-        ("i", "Include"),
+        ("f", "Filter"),
         ("e", "Exclude"),
         ("l", "Labels"),
         ("p", "Pods"),
@@ -96,9 +97,12 @@ class ExpandedHelp(Static):
     HELP_TEXT = """
 [bold cyan]Keyboard Shortcuts[/]
 
+[bold]Streaming Control[/]
+  [cyan]Space[/]  Pause/resume log streaming
+
 [bold]Navigation & Filters[/]
   [cyan]n[/]  Change namespace filter (supports regex)
-  [cyan]i[/]  Set include pattern (regex for pod names)
+  [cyan]f[/]  Set filter pattern (regex for pod names)
   [cyan]e[/]  Set exclude pattern (regex for pod names)
   [cyan]l[/]  Set label selector (e.g., app=web)
 

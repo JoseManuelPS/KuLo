@@ -145,35 +145,44 @@ class LogPanel(RichLog):
         json_data = self._try_parse_json(entry.message)
 
         if json_data:
-            self._append_json_message(text, json_data)
+            self._append_json_message(text, json_data, pod_color)
         else:
-            # Plain text - apply log level color if detected
-            message_style = self._detect_log_level_from_text(entry.message)
+            # Plain text - use pod color for message
+            no_color = self._state.no_color_logs if self._state else False
+            message_style = "default" if no_color else pod_color
             text.append(entry.message, style=message_style)
 
         return text
 
-    def _append_json_message(self, text: Text, json_data: dict) -> None:
+    def _append_json_message(self, text: Text, json_data: dict, pod_color: str) -> None:
         """Append a JSON log message with intelligent formatting.
 
         Args:
             text: The Text object to append to.
             json_data: The parsed JSON data.
+            pod_color: The color assigned to the pod.
         """
         # Get log level and color
         log_level = extract_log_level(json_data)
         level_color = get_log_level_color(log_level)
+
+        # Check if colorization is disabled
+        no_color = self._state.no_color_logs if self._state else False
 
         # Extract main message
         main_message = extract_message(json_data)
 
         if log_level:
             # Format: [LEVEL] message
+            # [LEVEL] tag keeps log level color (unless no_color_logs)
             level_display = log_level.upper()
-            text.append(f"[{level_display}] ", style=f"bold {level_color}")
+            level_style = "default" if no_color else f"bold {level_color}"
+            text.append(f"[{level_display}] ", style=level_style)
 
         if main_message:
-            text.append(main_message, style=level_color)
+            # Message uses pod color (unless no_color_logs)
+            message_style = "default" if no_color else pod_color
+            text.append(main_message, style=message_style)
         else:
             # No message field - show full JSON
             text.append(json.dumps(json_data, separators=(",", ":")), style="dim")

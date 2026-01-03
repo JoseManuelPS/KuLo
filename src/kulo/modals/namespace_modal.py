@@ -120,6 +120,7 @@ class NamespaceModal(ModalScreen[list[str] | None]):
 
             with Horizontal():
                 yield Button("Apply", variant="primary", id="apply")
+                yield Button("Clear", variant="warning", id="clear")
                 yield Button("Cancel", variant="default", id="cancel")
 
     def on_mount(self) -> None:
@@ -130,6 +131,13 @@ class NamespaceModal(ModalScreen[list[str] | None]):
     def on_apply(self) -> None:
         """Handle apply button press."""
         self._submit()
+
+    @on(Button.Pressed, "#clear")
+    def on_clear(self) -> None:
+        """Handle clear button press."""
+        input_widget = self.query_one("#namespace-input", Input)
+        input_widget.value = ""
+        input_widget.focus()
 
     @on(Button.Pressed, "#cancel")
     def on_cancel(self) -> None:

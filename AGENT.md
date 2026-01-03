@@ -11,7 +11,7 @@ kulo/
 │   ├── main.py      ─────────────────────┐
 │   │   • CLI entry point (argparse)      │
 │   │   • Argument validation             │
-│   │   • TUI/CLI mode selection          │
+│   │   • Mode selection (TUI/Snapshot)   │
 │   │   • Orchestration flow              │
 │   │                                     │
 │   ├── app.py       ◄────────────────────┤ imports (TUI)
@@ -32,7 +32,7 @@ kulo/
 │   │                                     │
 │   ├── modals/      ◄────────────────────┤ imports (TUI)
 │   │   • NamespaceModal                  │
-│   │   • FilterModal (include/exclude)   │
+│   │   • FilterModal (filter/exclude)    │
 │   │   • ConfirmModal                    │
 │   │                                     │
 │   ├── client.py    ◄────────────────────┤ imports
@@ -114,7 +114,7 @@ from multiple containers simultaneously, this would require threads and complex 
 
 ### TUI Architecture (Textual)
 
-KuLo supports an interactive TUI mode using the Textual framework:
+KuLo defaults to an interactive TUI mode using the Textual framework (use `--snap` for CLI mode):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -128,7 +128,7 @@ KuLo supports an interactive TUI mode using the Textual framework:
 │  │                                   │                           │  │
 │  └───────────────────────────────────┴───────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  [n] Namespace  [i] Include  [e] Exclude  [p] Pods  [q] Quit  │  │
+│  │  [n] Namespace  [f] Filter  [e] Exclude  [p] Pods  [q] Quit   │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                              HelpBar                                │
 └─────────────────────────────────────────────────────────────────────┘
@@ -146,10 +146,9 @@ KuLo supports an interactive TUI mode using the Textual framework:
 
 ```python
 # In main.py
-def should_use_tui(args) -> bool:
-    if args.tui:      return True   # --tui forces TUI
-    if args.no_tui:   return False  # --no-tui forces CLI
-    return args.follow              # Default: TUI for follow mode
+def is_snapshot_mode(args) -> bool:
+    return args.snap  # --snap enables snapshot mode (CLI)
+    # Default: TUI mode with real-time streaming
 ```
 
 ### Concurrency Model
@@ -264,17 +263,19 @@ class ColorAssigner:
 
 ```python
 # In configure_output():
-self._calculate_max_prefix_width(namespaces, pods)
+# Pass containers to calculate width only for displayed containers (respects max_containers)
+self._calculate_max_prefix_width_from_containers(containers)
 
 # In _format_log_line():
+# Format: [namespace] pod_name (container_name) > message
 prefix = "".join(prefix_parts)
 if self._max_prefix_width > 0:
     prefix = prefix.ljust(self._max_prefix_width)  # Pad to align
 ```
 
-This ensures all log lines align regardless of pod/container name lengths.
+This ensures all log lines align regardless of pod/container name lengths. The prefix width is calculated only from containers that will actually be displayed (after applying `--max-containers` limit).
 
-### 8. LogRenderer Protocol for UI Abstraction
+### 7. LogRenderer Protocol for UI Abstraction
 
 ```python
 # In manager.py
@@ -293,6 +294,38 @@ async def run(self, ui: "KuloUI | LogRenderer", ...):
 - **TUI support**: KuloApp implements `print_log_entry()` for TUI rendering
 - **CLI support**: KuloUI implements it for Rich console output
 - **Testability**: Easy to mock for unit tests
+
+### 8. Log Colorization Strategy
+
+```python
+# In ui.py and widgets/log_panel.py:
+
+# Plain text logs: use pod color
+message_style = "default" if self._no_color_logs else pod_color
+text.append(entry.message, style=message_style)
+
+# JSON logs: level tag keeps log level color, message uses pod color
+if entry.log_level:
+    level_style = "default" if self._no_color_logs else f"bold {level_color}"
+    text.append(f"[{level_display}] ", style=level_style)
+
+message_style = "default" if self._no_color_logs else pod_color
+text.append(main_message, style=message_style)
+```
+
+**Colorization behavior**:
+- **Plain text logs**: Message colored with pod's assigned color (from Kelly's palette)
+- **JSON logs**: 
+  - `[LEVEL]` tag uses log level colors (green/yellow/red based on severity)
+  - Message uses pod's assigned color
+  - Metadata fields remain dimmed
+- **`--no-color-logs` flag**: Disables all log message colorization, uses default style
+
+**Why this design**:
+- **Pod identification**: Pod colors help visually distinguish logs from different pods
+- **Level visibility**: JSON log level tags retain semantic colors for quick severity scanning
+- **Consistency**: Same pod always gets same color across log lines
+- **Accessibility**: `--no-color-logs` option for environments where colors aren't supported
 
 ### 9. Namespace Regex Resolution
 

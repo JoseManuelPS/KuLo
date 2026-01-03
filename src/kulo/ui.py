@@ -51,6 +51,7 @@ class KuloUI:
         console: Console | None = None,
         show_namespace: bool = True,
         show_container: bool = True,
+        no_color_logs: bool = False,
     ) -> None:
         """Initialize the UI.
 
@@ -58,6 +59,7 @@ class KuloUI:
             console: Optional Rich Console instance.
             show_namespace: Whether to include namespace in output.
             show_container: Whether to include container name in output.
+            no_color_logs: Whether to disable log message colorization.
         """
         self.console = console or Console()
         self.show_namespace = show_namespace
@@ -65,11 +67,13 @@ class KuloUI:
         self.pod_containers: dict[str, int] = {}
         self._color_assigner = ColorAssigner()
         self._max_prefix_width: int = 0
+        self._no_color_logs = no_color_logs
 
     def configure_output(
         self,
         namespaces: list[str],
         pods: list[PodInfo],
+        containers: list[ContainerInfo] | None = None,
     ) -> None:
         """Configure output based on discovered resources.
 
@@ -80,6 +84,9 @@ class KuloUI:
         Args:
             namespaces: List of namespaces being observed.
             pods: List of pods being observed.
+            containers: Optional list of containers to stream. If provided,
+                prefix width is calculated based on these containers only
+                (useful when max_containers limits the displayed containers).
         """
         # Hide namespace if only one
         if len(namespaces) == 1:
@@ -104,7 +111,11 @@ class KuloUI:
         self._color_assigner.initialize(pod_names)
 
         # Calculate maximum prefix width for aligned output
-        self._calculate_max_prefix_width(pods)
+        # Use containers list if provided (respects max_containers limit)
+        if containers is not None:
+            self._calculate_max_prefix_width_from_containers(containers)
+        else:
+            self._calculate_max_prefix_width(pods)
 
     def print_summary(
         self,
@@ -126,11 +137,12 @@ class KuloUI:
         ns_display = ", ".join(namespaces) if namespaces else "current context"
 
         self.console.print()
+        max_streams_display = "unlimited" if max_containers == 0 else str(max_containers)
         self.console.print(
             Panel.fit(
                 f"[bold cyan]KuLo[/] - Kubernetes Log Aggregator\n"
                 f"[dim]Namespace(s): {ns_display} | Mode: {mode} | "
-                f"Max streams: {max_containers}[/]",
+                f"Max streams: {max_streams_display}[/]",
                 border_style="cyan",
             )
         )
@@ -194,11 +206,11 @@ class KuloUI:
 
         self.console.print(table)
 
-        # Warning if over limit
-        if total_containers > max_containers:
+        # Warning if over limit (skip if unlimited)
+        if max_containers > 0 and total_containers > max_containers:
             self.console.print()
             self.console.print(
-                f"[bold yellow]⚠ Warning:[/] Found {total_containers} containers, "
+                f"[bold yellow]⚠  Warning:[/] Found {total_containers} containers, "
                 f"but max-containers is {max_containers}. "
                 f"Only the first {max_containers} will be streamed."
             )
@@ -278,30 +290,30 @@ class KuloUI:
         text = Text()
         pod_color = self._get_pod_color(entry.pod_name)
 
-        # Build prefix parts
+        # Build prefix parts: [namespace] pod_name (container)
         prefix_parts: list[str] = []
 
         if self.show_namespace:
-            prefix_parts.append(f"[{entry.namespace}]")
+            prefix_parts.append(f"[{entry.namespace}] ")
 
-        prefix_parts.append(f"[{entry.pod_name}]")
+        prefix_parts.append(entry.pod_name)
 
         if self.show_container:
-            prefix_parts.append(f"[{entry.container_name}]")
+            prefix_parts.append(f" ({entry.container_name})")
 
         # Add prefix with pod color, padded to align with other entries
         prefix = "".join(prefix_parts)
         if self._max_prefix_width > 0:
             prefix = prefix.ljust(self._max_prefix_width)
         text.append(prefix, style=pod_color)
-        text.append(" | ", style="dim")
+        text.append(" > ", style="dim")
 
         # Format message based on JSON or plain text
         if entry.is_json and entry.json_data:
             self._append_json_message(text, entry)
         else:
-            # Plain text - apply log level color if detected
-            message_style = self._detect_log_level_from_text(entry.message)
+            # Plain text - use pod color for message
+            message_style = "default" if self._no_color_logs else pod_color
             text.append(entry.message, style=message_style)
 
         return text
@@ -315,19 +327,24 @@ class KuloUI:
         """
         assert entry.json_data is not None
 
-        # Get log level color
+        # Get log level color and pod color
         level_color = get_log_level_color(entry.log_level)
+        pod_color = self._get_pod_color(entry.pod_name)
 
         # Extract main message
         main_message = extract_message(entry.json_data)
 
         if entry.log_level:
             # Format: [LEVEL] message
+            # [LEVEL] tag keeps log level color (unless no_color_logs)
             level_display = entry.log_level.upper()
-            text.append(f"[{level_display}] ", style=f"bold {level_color}")
+            level_style = "default" if self._no_color_logs else f"bold {level_color}"
+            text.append(f"[{level_display}] ", style=level_style)
 
         if main_message:
-            text.append(main_message, style=level_color)
+            # Message uses pod color (unless no_color_logs)
+            message_style = "default" if self._no_color_logs else pod_color
+            text.append(main_message, style=message_style)
         else:
             # No message field - show full JSON
             text.append(entry.message, style="dim")
@@ -443,6 +460,8 @@ class KuloUI:
     ) -> int:
         """Calculate the width of a log prefix for a specific container.
 
+        Uses the format: [namespace] pod_name (container_name)
+
         Args:
             namespace: The namespace name.
             pod_name: The pod name.
@@ -454,12 +473,15 @@ class KuloUI:
         width = 0
 
         if self.show_namespace:
-            width += len(f"[{namespace}]")
+            # Format: "[namespace] " (with trailing space)
+            width += len(f"[{namespace}] ")
 
-        width += len(f"[{pod_name}]")
+        # Pod name without brackets
+        width += len(pod_name)
 
         if self.show_container:
-            width += len(f"[{container_name}]")
+            # Format: " (container_name)"
+            width += len(f" ({container_name})")
 
         return width
 
@@ -485,6 +507,28 @@ class KuloUI:
                     pod.namespace, pod.name, container_name
                 )
                 max_width = max(max_width, width)
+
+        self._max_prefix_width = max_width
+
+    def _calculate_max_prefix_width_from_containers(
+        self,
+        containers: list[ContainerInfo],
+    ) -> None:
+        """Calculate the maximum prefix width from a list of containers.
+
+        This is used when max_containers limits which containers are displayed,
+        ensuring prefix width is based only on the actually displayed containers.
+
+        Args:
+            containers: List of containers to be displayed.
+        """
+        max_width = 0
+
+        for container in containers:
+            width = self._calculate_prefix_width(
+                container.namespace, container.pod_name, container.container_name
+            )
+            max_width = max(max_width, width)
 
         self._max_prefix_width = max_width
 

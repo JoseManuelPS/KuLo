@@ -14,6 +14,11 @@ import logging
 import sys
 from typing import NoReturn
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
 from kulo import __version__
 from kulo.client import (
     KuloClient,
@@ -34,13 +39,127 @@ from kulo.utils import (
     validate_label_selector,
 )
 
-
 # Configure logging
 logging.basicConfig(
     level=logging.WARNING,
     format="%(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+LOGO = r"""
+[bold cyan]  _  __      _          [/]
+[bold cyan] | |/ /     | |         [/]
+[bold cyan] | ' / _   _| |     ___  [/]
+[bold cyan] |  < | | | | |    / _ \ [/]
+[bold cyan] | . \| |_| | |___| (_) |[/]
+[bold cyan] |_|\_\\__,_|______\___/ [/]
+"""
+
+
+def print_help() -> None:
+    """Print a beautifully formatted help message using Rich."""
+    console = Console()
+
+    # Logo and title
+    console.print(LOGO)
+    console.print(
+        f"  [bold]KuLo[/] [dim]v{__version__}[/] · Kubernetes Log Aggregator\n",
+        highlight=False,
+    )
+    console.print(
+        "  [italic]Visualize K8s logs in an aggregated, filterable, "
+        "and aesthetically superior manner.[/]\n"
+    )
+
+    # Usage
+    console.print("[bold yellow]Usage:[/]")
+    console.print("  kulo [OPTIONS]\n")
+
+    # Filtering options
+    console.print("[bold yellow]Filtering:[/]")
+    filter_table = Table(show_header=False, box=None, padding=(0, 2), collapse_padding=True)
+    filter_table.add_column("Option", style="cyan", no_wrap=True)
+    filter_table.add_column("Description")
+    filter_table.add_row("-n, --namespace NS", "Namespaces (comma-separated or regex)")
+    filter_table.add_row("-l, --label-selector SEL", "Kubernetes label selector [dim](e.g., app=web)[/]")
+    filter_table.add_row("-f, --filter PATTERN", "Regex patterns to filter/include pods")
+    filter_table.add_row("-e, --exclude PATTERN", "Regex patterns to exclude pods")
+    filter_table.add_row("--exclude-init", "Exclude init containers")
+    filter_table.add_row("--exclude-ephemeral", "Exclude ephemeral containers")
+    console.print(filter_table)
+    console.print()
+
+    # Mode options
+    console.print("[bold yellow]Mode:[/]")
+    mode_table = Table(show_header=False, box=None, padding=(0, 2), collapse_padding=True)
+    mode_table.add_column("Option", style="cyan", no_wrap=True)
+    mode_table.add_column("Description")
+    mode_table.add_row("--snap", "Snapshot mode (fetch logs once, no streaming)")
+    console.print(mode_table)
+    console.print()
+
+    # General options
+    console.print("[bold yellow]Options:[/]")
+    options_table = Table(show_header=False, box=None, padding=(0, 2), collapse_padding=True)
+    options_table.add_column("Option", style="cyan", no_wrap=True)
+    options_table.add_column("Description")
+    options_table.add_row("-s, --since DURATION", "Show logs since duration [dim](default: 10m)[/]")
+    options_table.add_row("-t, --tail N", "Initial lines to show [dim](default: 25)[/]")
+    options_table.add_row("--max-containers N", "Max concurrent streams [dim](default: 10, 0=unlimited)[/]")
+    options_table.add_row("-v, --verbose", "Increase verbosity [dim](-v info, -vv debug)[/]")
+    console.print(options_table)
+    console.print()
+
+    # Examples panel
+    examples = Text()
+    examples.append("kulo", style="cyan")
+    examples.append("                           # Stream logs (TUI mode)\n")
+    examples.append("kulo ", style="white")
+    examples.append("-n", style="cyan")
+    examples.append(" frontend,backend       # Multiple namespaces\n")
+    examples.append("kulo ", style="white")
+    examples.append("-n", style="cyan")
+    examples.append(" 'dev-.*'               # Namespaces matching regex\n")
+    examples.append("kulo ", style="white")
+    examples.append("-l", style="cyan")
+    examples.append(" app=web                # Filter pods by label\n")
+    examples.append("kulo ", style="white")
+    examples.append("-f", style="cyan")
+    examples.append(" 'api-.*' ")
+    examples.append("-e", style="cyan")
+    examples.append(" 'test-.*'  # Filter/exclude by regex\n")
+    examples.append("kulo ", style="white")
+    examples.append("--snap", style="cyan")
+    examples.append(" -s", style="cyan")
+    examples.append(" 1h ")
+    examples.append("-t", style="cyan")
+    examples.append(" 100       # Snapshot: last hour, 100 lines")
+
+    console.print(Panel(examples, title="[bold]Examples[/]", border_style="dim", padding=(0, 1)))
+
+
+class RichHelpAction(argparse.Action):
+    """Custom help action that prints Rich-formatted help."""
+
+    def __init__(
+        self,
+        option_strings,
+        dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS,
+        help="Show this help message and exit",  # noqa: A002
+    ):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+
+    def __call__(self, parser, _namespace, _values, _option_string=None):
+        print_help()
+        parser.exit()
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -51,21 +170,13 @@ def create_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="kulo",
-        description=(
-            "KuLo - Kubernetes Log Aggregator\n\n"
-            "Visualize Kubernetes logs in an aggregated, filterable, "
-            "and aesthetically superior manner."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Examples:\n"
-            "  kulo                           # Logs from current namespace\n"
-            "  kulo -n frontend,backend       # Multiple namespaces\n"
-            "  kulo -n 'dev-.*'               # Namespaces matching regex\n"
-            "  kulo -l app=web -f             # Follow pods with label\n"
-            "  kulo -i 'api-.*' -e 'test-.*'  # Include/exclude by regex\n"
-            "  kulo -s 1h -t 100              # Last hour, 100 lines\n"
-        ),
+        add_help=False,
+    )
+
+    # Custom help
+    parser.add_argument(
+        "-h", "--help",
+        action=RichHelpAction,
     )
 
     # Version
@@ -93,13 +204,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Kubernetes label selector for server-side filtering (e.g., 'app=web')",
     )
 
-    # Include/exclude regex
+    # Filter/exclude regex
     parser.add_argument(
-        "-i", "--include",
+        "-f", "--filter",
         type=str,
         default=None,
         metavar="PATTERN",
-        help="Comma-separated regex patterns to include pods",
+        help="Comma-separated regex patterns to filter/include pods",
     )
 
     parser.add_argument(
@@ -123,11 +234,11 @@ def create_parser() -> argparse.ArgumentParser:
         help="Exclude ephemeral containers from output",
     )
 
-    # Log modes
+    # Mode selection
     parser.add_argument(
-        "-f", "--follow",
+        "--snap",
         action="store_true",
-        help="Follow logs in real-time (streaming mode)",
+        help="Snapshot mode: fetch logs once without streaming (CLI output)",
     )
 
     parser.add_argument(
@@ -152,7 +263,7 @@ def create_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         metavar="N",
-        help="Maximum concurrent container streams. Default: 10",
+        help="Maximum concurrent container streams (0 = unlimited). Default: 10",
     )
 
     # Verbosity
@@ -163,17 +274,11 @@ def create_parser() -> argparse.ArgumentParser:
         help="Increase verbosity (-v for info, -vv for debug)",
     )
 
-    # UI mode
+    # Log colorization
     parser.add_argument(
-        "--no-tui",
+        "--no-color-logs",
         action="store_true",
-        help="Use classic CLI output instead of interactive TUI (default for snapshot mode)",
-    )
-
-    parser.add_argument(
-        "--tui",
-        action="store_true",
-        help="Force interactive TUI mode even in snapshot mode",
+        help="Disable log message colorization (plain output)",
     )
 
     return parser
@@ -210,7 +315,7 @@ async def run_kulo(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, non-zero for errors).
     """
-    ui = KuloUI()
+    ui = KuloUI(no_color_logs=args.no_color_logs)
 
     # Parse and validate arguments
     try:
@@ -226,9 +331,9 @@ async def run_kulo(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        include_patterns = compile_patterns(args.include)
+        filter_patterns = compile_patterns(args.filter)
     except ValueError as e:
-        ui.print_error(f"Invalid include pattern: {e}")
+        ui.print_error(f"Invalid filter pattern: {e}")
         return 1
 
     try:
@@ -282,11 +387,11 @@ async def run_kulo(args: argparse.Namespace) -> int:
             # Apply regex filters (client-side)
             filtered_pods = filter_pods(
                 pods=all_pods,
-                include_patterns=include_patterns,
+                filter_patterns=filter_patterns,
                 exclude_patterns=exclude_patterns,
             )
 
-            if not filtered_pods and not args.follow:
+            if not filtered_pods:
                 ui.print_warning("No pods found matching the specified criteria")
                 return 0
 
@@ -297,36 +402,43 @@ async def run_kulo(args: argparse.Namespace) -> int:
                 exclude_ephemeral=args.exclude_ephemeral,
             )
 
-            if not all_containers and not args.follow:
+            if not all_containers:
                 ui.print_warning("No containers found in matching pods")
                 return 0
 
-            # Apply throttling
+            # Apply throttling (0 = unlimited)
             containers_to_stream = all_containers
-            if len(all_containers) > args.max_containers:
+            if args.max_containers > 0 and len(all_containers) > args.max_containers:
                 containers_to_stream = all_containers[:args.max_containers]
 
-            # Configure UI output
-            ui.configure_output(namespaces, filtered_pods)
+            # Configure UI output (pass containers to calculate prefix width correctly)
+            ui.configure_output(namespaces, filtered_pods, containers_to_stream)
 
-            # Print summary
+            # Print summary (snapshot mode - no follow)
             ui.print_summary(
                 pods=filtered_pods,
                 namespaces=namespaces,
-                follow=args.follow,
+                follow=False,
                 max_containers=args.max_containers,
             )
 
-            # Create and run manager
+            # Create and run manager (snapshot mode - no streaming)
             manager = LogManager(client)
+
+            # When max_containers is 0 (unlimited), use actual container count
+            max_concurrent = (
+                len(containers_to_stream)
+                if args.max_containers == 0
+                else args.max_containers
+            )
 
             await manager.run(
                 containers=containers_to_stream,
                 ui=ui,
-                follow=args.follow,
+                follow=False,
                 since_seconds=since_seconds,
                 tail_lines=args.tail,
-                max_concurrent=args.max_containers,
+                max_concurrent=max_concurrent,
                 label_selector=label_selector,
                 namespaces=namespaces,
                 on_new_container=ui.print_new_container,
@@ -344,14 +456,14 @@ async def run_kulo(args: argparse.Namespace) -> int:
 
 def filter_pods(
     pods: list[PodInfo],
-    include_patterns: list,
+    filter_patterns: list,
     exclude_patterns: list,
 ) -> list[PodInfo]:
-    """Filter pods based on include/exclude patterns.
+    """Filter pods based on filter/exclude patterns.
 
     Args:
         pods: List of pods to filter.
-        include_patterns: Compiled include regex patterns.
+        filter_patterns: Compiled filter regex patterns (include).
         exclude_patterns: Compiled exclude regex patterns.
 
     Returns:
@@ -360,8 +472,8 @@ def filter_pods(
     result = []
 
     for pod in pods:
-        # Include filter: if patterns exist, pod must match at least one
-        if include_patterns and not matches_any(pod.name, include_patterns):
+        # Filter: if patterns exist, pod must match at least one
+        if filter_patterns and not matches_any(pod.name, filter_patterns):
             continue
 
         # Exclude filter: if pod matches any pattern, skip it
@@ -471,31 +583,23 @@ async def resolve_namespace_patterns(
     return resolved
 
 
-def should_use_tui(args: argparse.Namespace) -> bool:
-    """Determine if TUI mode should be used.
+def is_snapshot_mode(args: argparse.Namespace) -> bool:
+    """Determine if snapshot mode should be used.
 
-    TUI mode is used when:
-    - --tui flag is explicitly set, OR
-    - Following logs (-f) AND --no-tui is not set
+    Snapshot mode is used when --snap flag is set.
+    Otherwise, the default is follow mode (TUI).
 
     Args:
         args: Parsed command-line arguments.
 
     Returns:
-        True if TUI mode should be used.
+        True if snapshot mode should be used.
     """
-    # Explicit flags take precedence
-    if args.tui:
-        return True
-    if args.no_tui:
-        return False
-
-    # Default: TUI for follow mode, CLI for snapshot mode
-    return args.follow
+    return args.snap
 
 
 def run_tui_mode(args: argparse.Namespace) -> int:
-    """Run KuLo in interactive TUI mode.
+    """Run KuLo in interactive TUI mode (follow/streaming mode).
 
     Args:
         args: Parsed command-line arguments.
@@ -524,13 +628,13 @@ def run_tui_mode(args: argparse.Namespace) -> int:
     try:
         run_tui(
             namespaces=namespaces or None,
-            include_pattern=args.include or "",
+            filter_pattern=args.filter or "",
             exclude_pattern=args.exclude or "",
             label_selector=label_selector or "",
-            follow=args.follow,
             since_seconds=since_seconds,
             tail_lines=args.tail,
             max_containers=args.max_containers,
+            no_color_logs=args.no_color_logs,
         )
         return 0
     except KeyboardInterrupt:
@@ -548,14 +652,15 @@ def main() -> NoReturn:
     configure_logging(args.verbose)
 
     # Choose mode based on arguments
-    if should_use_tui(args):
-        exit_code = run_tui_mode(args)
-    else:
+    # Default is follow mode (TUI), --snap triggers snapshot mode (CLI)
+    if is_snapshot_mode(args):
         try:
             exit_code = asyncio.run(run_kulo(args))
         except KeyboardInterrupt:
             print("\nInterrupted")
             exit_code = 130
+    else:
+        exit_code = run_tui_mode(args)
 
     sys.exit(exit_code)
 

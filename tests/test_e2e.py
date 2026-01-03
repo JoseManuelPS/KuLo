@@ -484,7 +484,8 @@ class TestCLIIntegration:
         assert result.returncode == 0
         assert "KuLo" in result.stdout
         assert "--namespace" in result.stdout
-        assert "--follow" in result.stdout
+        assert "--snap" in result.stdout
+        assert "--filter" in result.stdout
 
     def test_version_output(self) -> None:
         """Test --version output."""
@@ -503,6 +504,7 @@ class TestCLIIntegration:
         result = subprocess.run(
             [
                 "python", "-m", "kulo.main",
+                "--snap",  # Use snapshot mode to avoid TUI
                 "-n", "nonexistent-namespace-xyz123",
             ],
             capture_output=True,
@@ -522,6 +524,7 @@ class TestCLIIntegration:
         result = subprocess.run(
             [
                 "python", "-m", "kulo.main",
+                "--snap",  # Explicit snapshot mode
                 "-n", test_namespace,
                 "-l", "app=plain-logger",
                 "-t", "3",

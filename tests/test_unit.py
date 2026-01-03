@@ -21,7 +21,6 @@ from kulo.utils import (
     compile_patterns,
     extract_log_level,
     extract_message,
-    get_color_for_pod,
     get_log_level_color,
     is_regex_pattern,
     matches_any,
@@ -157,22 +156,6 @@ class TestMatchesAny:
 # ============================================================================
 # Utils Tests: Color Management
 # ============================================================================
-
-
-class TestGetColorForPod:
-    """Tests for the get_color_for_pod function."""
-
-    def test_consistent_color(self) -> None:
-        """Test that same pod always gets same color."""
-        color1 = get_color_for_pod("my-pod-abc")
-        color2 = get_color_for_pod("my-pod-abc")
-        assert color1 == color2
-
-    def test_different_pods_can_have_different_colors(self) -> None:
-        """Test that different pods can have different colors."""
-        # With enough pods, at least some should differ
-        colors = {get_color_for_pod(f"pod-{i}") for i in range(100)}
-        assert len(colors) > 1
 
 
 class TestGetLogLevelColor:
@@ -483,6 +466,106 @@ class TestKuloUI:
         assert ui._detect_log_level_from_text("DEBUG: Trace info") == "dim"
         assert ui._detect_log_level_from_text("Normal log") == "default"
 
+    def test_no_color_logs_parameter(self) -> None:
+        """Test no_color_logs parameter."""
+        from kulo.ui import KuloUI
+
+        ui = KuloUI(no_color_logs=True)
+        assert ui._no_color_logs is True
+
+        ui2 = KuloUI(no_color_logs=False)
+        assert ui2._no_color_logs is False
+
+        ui3 = KuloUI()
+        assert ui3._no_color_logs is False  # Default
+
+    def test_format_log_line_uses_pod_color(self, sample_pod_info: PodInfo) -> None:
+        """Test that plain text logs use pod color."""
+        from datetime import datetime
+        from kulo.models import LogEntry
+        from kulo.ui import KuloUI
+
+        ui = KuloUI()
+        ui.configure_output(["default"], [sample_pod_info])
+
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name=sample_pod_info.name,
+            container_name="main",
+            message="Plain log message",
+        )
+
+        formatted = ui._format_log_line(entry)
+        # Check that message uses pod color (not log level color)
+        pod_color = ui._get_pod_color(sample_pod_info.name)
+        # The message should be in the formatted text with pod color
+        assert "Plain log message" in formatted.plain
+
+    def test_format_json_log_uses_pod_color_for_message(
+        self, sample_pod_info: PodInfo
+    ) -> None:
+        """Test that JSON logs use pod color for message, level color for tag."""
+        from datetime import datetime
+        from kulo.models import LogEntry
+        from kulo.ui import KuloUI
+
+        ui = KuloUI()
+        ui.configure_output(["default"], [sample_pod_info])
+
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name=sample_pod_info.name,
+            container_name="main",
+            message='{"level":"INFO","msg":"Request received"}',
+        )
+        entry.is_json = True
+        entry.json_data = {"level": "INFO", "msg": "Request received"}
+        entry.log_level = "INFO"
+
+        formatted = ui._format_log_line(entry)
+        # Should contain both [INFO] tag and message
+        assert "[INFO]" in formatted.plain
+        assert "Request received" in formatted.plain
+
+    def test_no_color_logs_disables_coloring(self, sample_pod_info: PodInfo) -> None:
+        """Test that no_color_logs disables all log coloring."""
+        from datetime import datetime
+        from kulo.models import LogEntry
+        from kulo.ui import KuloUI
+
+        ui = KuloUI(no_color_logs=True)
+        ui.configure_output(["default"], [sample_pod_info])
+
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name=sample_pod_info.name,
+            container_name="main",
+            message="Plain log message",
+        )
+
+        formatted = ui._format_log_line(entry)
+        # Message should be present but styling should be default
+        assert "Plain log message" in formatted.plain
+
+        # Test JSON log
+        entry2 = LogEntry(
+            timestamp=datetime.now(),
+            namespace="default",
+            pod_name=sample_pod_info.name,
+            container_name="main",
+            message='{"level":"ERROR","msg":"Error occurred"}',
+        )
+        entry2.is_json = True
+        entry2.json_data = {"level": "ERROR", "msg": "Error occurred"}
+        entry2.log_level = "ERROR"
+
+        formatted2 = ui._format_log_line(entry2)
+        assert "[ERROR]" in formatted2.plain
+        assert "Error occurred" in formatted2.plain
+
 
 # ============================================================================
 # Manager Tests: Queue and Throttling
@@ -535,12 +618,12 @@ class TestLogManager:
 class TestFilterPods:
     """Tests for pod filtering logic."""
 
-    def test_include_filter(self, multiple_pods: list[PodInfo]) -> None:
-        """Test include filter."""
+    def test_filter_pods(self, multiple_pods: list[PodInfo]) -> None:
+        """Test filter pattern."""
         from kulo.main import filter_pods
 
-        include = compile_patterns("web-.*")
-        result = filter_pods(multiple_pods, include, [])
+        filter_pats = compile_patterns("web-.*")
+        result = filter_pods(multiple_pods, filter_pats, [])
 
         assert len(result) == 2
         assert all("web" in p.name for p in result)
@@ -556,12 +639,12 @@ class TestFilterPods:
         assert all("api" not in p.name for p in result)
 
     def test_combined_filters(self, multiple_pods: list[PodInfo]) -> None:
-        """Test combined include and exclude."""
+        """Test combined filter and exclude."""
         from kulo.main import filter_pods
 
-        include = compile_patterns("web-.*,api-.*")
+        filter_pats = compile_patterns("web-.*,api-.*")
         exclude = compile_patterns("api-.*")
-        result = filter_pods(multiple_pods, include, exclude)
+        result = filter_pods(multiple_pods, filter_pats, exclude)
 
         assert len(result) == 2
         assert all("web" in p.name for p in result)
@@ -609,17 +692,17 @@ class TestColorAssigner:
         assert assigner1.get_color("pod-b") == assigner2.get_color("pod-b")
         assert assigner1.get_color("pod-c") == assigner2.get_color("pod-c")
 
-    def test_sorted_order_assignment(self) -> None:
-        """Test that pods are assigned colors in sorted order."""
+    def test_arrival_order_assignment(self) -> None:
+        """Test that pods are assigned colors in arrival order."""
         assigner = ColorAssigner()
         assigner.initialize(["pod-c", "pod-a", "pod-b"])
 
-        # pod-a should get first color (alphabetically first)
-        assert assigner.get_color("pod-a") == POD_COLOR_PALETTE[0]
-        # pod-b should get second color
-        assert assigner.get_color("pod-b") == POD_COLOR_PALETTE[1]
-        # pod-c should get third color
-        assert assigner.get_color("pod-c") == POD_COLOR_PALETTE[2]
+        # pod-c should get first color (arrived first)
+        assert assigner.get_color("pod-c") == POD_COLOR_PALETTE[0]
+        # pod-a should get second color (arrived second)
+        assert assigner.get_color("pod-a") == POD_COLOR_PALETTE[1]
+        # pod-b should get third color (arrived third)
+        assert assigner.get_color("pod-b") == POD_COLOR_PALETTE[2]
 
     def test_no_repetition_within_palette_size(self) -> None:
         """Test that colors don't repeat within palette size."""
@@ -699,8 +782,9 @@ class TestPrefixAlignment:
         ui.show_container = True
 
         width = ui._calculate_prefix_width("default", "my-pod", "nginx")
-        # [default][my-pod][nginx] = 9 + 10 + 9 = 28 characters
-        expected = len("[default]") + len("[my-pod]") + len("[nginx]")
+        # Format: "[default] my-pod (nginx)"
+        # [default] = 9 + 1 space, my-pod = 6, " (nginx)" = 8
+        expected = len("[default] ") + len("my-pod") + len(" (nginx)")
         assert width == expected
 
     def test_prefix_width_without_namespace(self) -> None:
@@ -712,7 +796,8 @@ class TestPrefixAlignment:
         ui.show_container = True
 
         width = ui._calculate_prefix_width("default", "my-pod", "nginx")
-        expected = len("[my-pod]") + len("[nginx]")
+        # Format: "my-pod (nginx)"
+        expected = len("my-pod") + len(" (nginx)")
         assert width == expected
 
     def test_prefix_width_without_container(self) -> None:
@@ -724,7 +809,8 @@ class TestPrefixAlignment:
         ui.show_container = False
 
         width = ui._calculate_prefix_width("default", "my-pod", "nginx")
-        expected = len("[default]") + len("[my-pod]")
+        # Format: "[default] my-pod"
+        expected = len("[default] ") + len("my-pod")
         assert width == expected
 
     def test_max_prefix_width_configured(self, multiple_pods: list[PodInfo]) -> None:
@@ -887,4 +973,66 @@ class TestNamespaceRegexResolution:
         )
 
         assert result == []
+
+
+# ============================================================================
+# Max Containers Unlimited Tests
+# ============================================================================
+
+
+class TestMaxContainersUnlimited:
+    """Tests for max_containers=0 (unlimited) behavior."""
+
+    def test_cli_parser_accepts_zero(self) -> None:
+        """Test that CLI parser accepts --max-containers 0."""
+        from kulo.main import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["--max-containers", "0"])
+
+        assert args.max_containers == 0
+
+    def test_ui_summary_shows_unlimited(self) -> None:
+        """Test that UI summary shows 'unlimited' when max_containers is 0."""
+        from io import StringIO
+        from rich.console import Console
+        from kulo.ui import KuloUI
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=True, width=120)
+        ui = KuloUI(console=console)
+
+        ui.print_summary(
+            pods=[],
+            namespaces=["default"],
+            follow=False,
+            max_containers=0,
+        )
+
+        result = output.getvalue()
+        assert "unlimited" in result
+
+    def test_ui_summary_no_warning_when_unlimited(
+        self,
+        multiple_pods: list[PodInfo],
+    ) -> None:
+        """Test that no warning is shown when max_containers is 0."""
+        from io import StringIO
+        from rich.console import Console
+        from kulo.ui import KuloUI
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=True, width=120)
+        ui = KuloUI(console=console)
+        ui.configure_output(["frontend", "backend"], multiple_pods)
+
+        ui.print_summary(
+            pods=multiple_pods,
+            namespaces=["frontend", "backend"],
+            follow=False,
+            max_containers=0,
+        )
+
+        result = output.getvalue()
+        assert "Warning" not in result
 

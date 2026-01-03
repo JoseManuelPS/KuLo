@@ -21,31 +21,35 @@ class AppState:
     Holds all filter state and pod information. Changes to this state
     trigger UI updates and log stream re-subscription.
 
+    Note: The TUI always operates in follow/streaming mode.
+
     Attributes:
         namespaces: List of active namespace filters.
-        include_pattern: Regex pattern for including pods.
+        filter_pattern: Regex pattern for filtering/including pods.
         exclude_pattern: Regex pattern for excluding pods.
         label_selector: Kubernetes label selector string.
         active_pods: Map of pod names to enabled state.
         pods_info: List of discovered PodInfo objects.
         color_assigner: ColorAssigner for deterministic pod colors.
-        follow_mode: Whether to follow logs in real-time.
         since_seconds: Time window for log retrieval.
         tail_lines: Number of initial lines to fetch.
         max_containers: Maximum concurrent container streams.
+        is_paused: Whether streaming is currently paused.
+        no_color_logs: Whether to disable log message colorization.
     """
 
     namespaces: list[str] = field(default_factory=list)
-    include_pattern: str = ""
+    filter_pattern: str = ""
     exclude_pattern: str = ""
     label_selector: str = ""
     active_pods: dict[str, bool] = field(default_factory=dict)
     pods_info: list[PodInfo] = field(default_factory=list)
     color_assigner: ColorAssigner = field(default_factory=ColorAssigner)
-    follow_mode: bool = True
     since_seconds: int = 600
     tail_lines: int = 25
     max_containers: int = 10
+    is_paused: bool = False
+    no_color_logs: bool = False
 
     def update_pods(self, pods: list[PodInfo]) -> None:
         """Update the pods list and initialize active states.
@@ -128,7 +132,7 @@ class AppState:
     def copy_with(
         self,
         namespaces: list[str] | None = None,
-        include_pattern: str | None = None,
+        filter_pattern: str | None = None,
         exclude_pattern: str | None = None,
         label_selector: str | None = None,
     ) -> "AppState":
@@ -136,7 +140,7 @@ class AppState:
 
         Args:
             namespaces: New namespace list, or None to keep current.
-            include_pattern: New include pattern, or None to keep current.
+            filter_pattern: New filter pattern, or None to keep current.
             exclude_pattern: New exclude pattern, or None to keep current.
             label_selector: New label selector, or None to keep current.
 
@@ -145,15 +149,15 @@ class AppState:
         """
         return AppState(
             namespaces=namespaces if namespaces is not None else self.namespaces.copy(),
-            include_pattern=include_pattern if include_pattern is not None else self.include_pattern,
+            filter_pattern=filter_pattern if filter_pattern is not None else self.filter_pattern,
             exclude_pattern=exclude_pattern if exclude_pattern is not None else self.exclude_pattern,
             label_selector=label_selector if label_selector is not None else self.label_selector,
             active_pods=self.active_pods.copy(),
             pods_info=self.pods_info.copy(),
             color_assigner=self.color_assigner,
-            follow_mode=self.follow_mode,
             since_seconds=self.since_seconds,
             tail_lines=self.tail_lines,
             max_containers=self.max_containers,
+            no_color_logs=self.no_color_logs,
         )
 

@@ -1,7 +1,7 @@
 """Filter modal for KuLo TUI.
 
 This module provides a reusable modal dialog for regex filter patterns
-(include/exclude pod filters and label selectors).
+(pod filter, exclude, and label selectors).
 """
 
 import re
@@ -21,7 +21,7 @@ class FilterChanged(Message):
         """Initialize the message.
 
         Args:
-            filter_type: The type of filter (include, exclude, label).
+            filter_type: The type of filter (filter, exclude, label).
             pattern: The new filter pattern.
         """
         super().__init__()
@@ -32,7 +32,7 @@ class FilterChanged(Message):
 class FilterModal(ModalScreen[str | None]):
     """Modal dialog for regex filter patterns.
 
-    Reusable for include, exclude, and label selector filters.
+    Reusable for pod filter, exclude, and label selector filters.
     Provides real-time regex validation.
     """
 
@@ -100,10 +100,10 @@ class FilterModal(ModalScreen[str | None]):
 
     # Filter type configurations
     FILTER_CONFIGS = {
-        "include": {
-            "title": "Include Filter",
+        "filter": {
+            "title": "Pod Filter",
             "help": (
-                "Enter comma-separated regex patterns to include pods.\n"
+                "Enter comma-separated regex patterns to filter pods.\n"
                 "Only pods matching at least one pattern will be shown.\n"
                 "Examples: frontend-.*, api-server, worker-[0-9]+"
             ),
@@ -133,21 +133,21 @@ class FilterModal(ModalScreen[str | None]):
 
     def __init__(
         self,
-        filter_type: str = "include",
+        filter_type: str = "filter",
         current_value: str = "",
         **kwargs,
     ) -> None:
         """Initialize the modal.
 
         Args:
-            filter_type: Type of filter (include, exclude, label).
+            filter_type: Type of filter (filter, exclude, label).
             current_value: Current filter value.
             **kwargs: Additional arguments passed to ModalScreen.
         """
         super().__init__(**kwargs)
         self._filter_type = filter_type
         self._current = current_value
-        self._config = self.FILTER_CONFIGS.get(filter_type, self.FILTER_CONFIGS["include"])
+        self._config = self.FILTER_CONFIGS.get(filter_type, self.FILTER_CONFIGS["filter"])
         self._is_valid = True
         self._error_message = ""
 
@@ -237,7 +237,9 @@ class FilterModal(ModalScreen[str | None]):
     @on(Button.Pressed, "#clear")
     def on_clear(self) -> None:
         """Handle clear button press."""
-        self.dismiss("")
+        input_widget = self.query_one("#filter-input", Input)
+        input_widget.value = ""
+        input_widget.focus()
 
     @on(Button.Pressed, "#cancel")
     def on_cancel(self) -> None:

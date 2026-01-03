@@ -6,7 +6,6 @@ with Vim-style keybindings and reactive state management.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -24,9 +23,6 @@ from kulo.utils import compile_patterns, is_regex_pattern, matches_any
 from kulo.widgets import HelpBar, LogPanel, PodLegend
 from kulo.widgets.help_bar import ExpandedHelp
 from kulo.widgets.pod_legend import PodToggled
-
-if TYPE_CHECKING:
-    pass
 
 
 logger = logging.getLogger(__name__)
@@ -100,8 +96,9 @@ class KuloApp(App):
     """
 
     BINDINGS = [
+        Binding("space", "toggle_pause", "Pause/Resume", show=True),
         Binding("n", "namespace", "Namespace", show=True),
-        Binding("i", "include", "Include", show=True),
+        Binding("f", "filter", "Filter", show=True),
         Binding("e", "exclude", "Exclude", show=True),
         Binding("l", "labels", "Labels", show=True),
         Binding("p", "toggle_pods", "Toggle Pods", show=True),
@@ -117,39 +114,40 @@ class KuloApp(App):
     def __init__(
         self,
         initial_namespaces: list[str] | None = None,
-        include_pattern: str = "",
+        filter_pattern: str = "",
         exclude_pattern: str = "",
         label_selector: str = "",
-        follow: bool = True,
         since_seconds: int = 600,
         tail_lines: int = 25,
         max_containers: int = 10,
+        no_color_logs: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the application.
 
         Args:
             initial_namespaces: Initial namespace filters.
-            include_pattern: Initial include pattern.
-            exclude_pattern: Initial exclude pattern.
+            filter_pattern: Regex pattern to filter/include pods.
+            exclude_pattern: Regex pattern to exclude pods.
             label_selector: Initial label selector.
-            follow: Whether to follow logs in real-time.
             since_seconds: Time window for log retrieval.
             tail_lines: Number of initial lines to fetch.
             max_containers: Maximum concurrent container streams.
+            no_color_logs: Whether to disable log message colorization.
             **kwargs: Additional arguments passed to App.
         """
         super().__init__(**kwargs)
 
+        # TUI mode always uses follow/streaming
         self.state = AppState(
             namespaces=initial_namespaces or [],
-            include_pattern=include_pattern,
+            filter_pattern=filter_pattern,
             exclude_pattern=exclude_pattern,
             label_selector=label_selector,
-            follow_mode=follow,
             since_seconds=since_seconds,
             tail_lines=tail_lines,
             max_containers=max_containers,
+            no_color_logs=no_color_logs,
         )
 
         self._client: KuloClient | None = None
@@ -290,7 +288,7 @@ class KuloApp(App):
         # Apply regex filters
         filtered_pods = self._filter_pods(all_pods)
 
-        if not filtered_pods and not self.state.follow_mode:
+        if not filtered_pods:
             self.notify("No pods found matching criteria", severity="warning")
             return
 
@@ -310,12 +308,12 @@ class KuloApp(App):
         # Get all containers
         containers = self._get_containers(filtered_pods)
 
-        if not containers and not self.state.follow_mode:
+        if not containers:
             self.notify("No containers found in matching pods", severity="warning")
             return
 
-        # Apply throttling
-        if len(containers) > self.state.max_containers:
+        # Apply throttling (0 = unlimited)
+        if self.state.max_containers > 0 and len(containers) > self.state.max_containers:
             containers = containers[: self.state.max_containers]
             self.notify(
                 f"Limited to {self.state.max_containers} containers",
@@ -326,17 +324,24 @@ class KuloApp(App):
         ns_display = ", ".join(self.state.namespaces)
         self.sub_title = f"{ns_display} | {len(filtered_pods)} pods | {len(containers)} containers"
 
-        # Start streaming
+        # Start streaming (TUI always uses follow mode)
         self._manager = LogManager(client)
         self.post_message(StreamingStarted())
+
+        # When max_containers is 0 (unlimited), use actual container count
+        max_concurrent = (
+            len(containers)
+            if self.state.max_containers == 0
+            else self.state.max_containers
+        )
 
         await self._manager.run(
             containers=containers,
             ui=self,  # We'll handle the UI ourselves
-            follow=self.state.follow_mode,
+            follow=True,  # TUI always streams in follow mode
             since_seconds=self.state.since_seconds,
             tail_lines=self.state.tail_lines,
-            max_concurrent=self.state.max_containers,
+            max_concurrent=max_concurrent,
             label_selector=self.state.label_selector or None,
             namespaces=self.state.namespaces,
             on_new_container=self._on_new_container,
@@ -345,7 +350,7 @@ class KuloApp(App):
         self.post_message(StreamingStopped())
 
     def _filter_pods(self, pods: list[PodInfo]) -> list[PodInfo]:
-        """Filter pods based on include/exclude patterns.
+        """Filter pods based on filter/exclude patterns.
 
         Args:
             pods: List of pods to filter.
@@ -354,9 +359,9 @@ class KuloApp(App):
             Filtered list of pods.
         """
         try:
-            include_patterns = compile_patterns(self.state.include_pattern or None)
+            filter_patterns = compile_patterns(self.state.filter_pattern or None)
         except ValueError:
-            include_patterns = []
+            filter_patterns = []
 
         try:
             exclude_patterns = compile_patterns(self.state.exclude_pattern or None)
@@ -366,8 +371,8 @@ class KuloApp(App):
         result = []
 
         for pod in pods:
-            # Include filter
-            if include_patterns and not matches_any(pod.name, include_patterns):
+            # Filter: if patterns exist, pod must match at least one
+            if filter_patterns and not matches_any(pod.name, filter_patterns):
                 continue
 
             # Exclude filter
@@ -452,6 +457,30 @@ class KuloApp(App):
         self._on_new_container(container)
 
     # Action handlers
+    def action_toggle_pause(self) -> None:
+        """Toggle pause/resume for log streaming."""
+        if self.state.is_paused:
+            # Resume streaming
+            self.state.is_paused = False
+            self._update_pause_indicator()
+            self._initialize_and_stream()
+            self.notify("Streaming resumed")
+        else:
+            # Pause streaming
+            self.state.is_paused = True
+            if self._manager:
+                self._manager.request_shutdown()
+            self._update_pause_indicator()
+            self.notify("Streaming paused")
+
+    def _update_pause_indicator(self) -> None:
+        """Update the help bar with pause status."""
+        help_bar = self.query_one("#help-bar", HelpBar)
+        if self.state.is_paused:
+            help_bar.show_mode("PAUSED")
+        else:
+            help_bar.update_content()
+
     def action_namespace(self) -> None:
         """Open namespace filter modal."""
 
@@ -466,18 +495,18 @@ class KuloApp(App):
             on_namespace_result,
         )
 
-    def action_include(self) -> None:
-        """Open include filter modal."""
+    def action_filter(self) -> None:
+        """Open filter modal (for pod name filtering)."""
 
-        def on_include_result(result: str | None) -> None:
+        def on_filter_result(result: str | None) -> None:
             if result is not None:
-                self.state.include_pattern = result
-                self.notify(f"Include filter: {result or '(none)'}")
+                self.state.filter_pattern = result
+                self.notify(f"Filter: {result or '(none)'}")
                 self._restart_streaming_sync()
 
         self.push_screen(
-            FilterModal(filter_type="include", current_value=self.state.include_pattern),
-            on_include_result,
+            FilterModal(filter_type="filter", current_value=self.state.filter_pattern),
+            on_filter_result,
         )
 
     def action_exclude(self) -> None:
@@ -603,35 +632,37 @@ class KuloApp(App):
 
 def run_tui(
     namespaces: list[str] | None = None,
-    include_pattern: str = "",
+    filter_pattern: str = "",
     exclude_pattern: str = "",
     label_selector: str = "",
-    follow: bool = True,
     since_seconds: int = 600,
     tail_lines: int = 25,
     max_containers: int = 10,
+    no_color_logs: bool = False,
 ) -> None:
-    """Run the KuLo TUI application.
+    """Run the KuLo TUI application (follow/streaming mode).
+
+    The TUI always operates in follow mode with real-time log streaming.
 
     Args:
         namespaces: Initial namespace filters.
-        include_pattern: Initial include pattern.
-        exclude_pattern: Initial exclude pattern.
+        filter_pattern: Regex pattern to filter/include pods.
+        exclude_pattern: Regex pattern to exclude pods.
         label_selector: Initial label selector.
-        follow: Whether to follow logs in real-time.
         since_seconds: Time window for log retrieval.
         tail_lines: Number of initial lines to fetch.
         max_containers: Maximum concurrent container streams.
+        no_color_logs: Whether to disable log message colorization.
     """
     app = KuloApp(
         initial_namespaces=namespaces,
-        include_pattern=include_pattern,
+        filter_pattern=filter_pattern,
         exclude_pattern=exclude_pattern,
         label_selector=label_selector,
-        follow=follow,
         since_seconds=since_seconds,
         tail_lines=tail_lines,
         max_containers=max_containers,
+        no_color_logs=no_color_logs,
     )
     app.run()
 
