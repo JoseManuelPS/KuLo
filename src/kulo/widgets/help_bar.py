@@ -23,13 +23,16 @@ class HelpBar(Static):
     }
     """
 
-    # Default keybindings to display
+    # Keybindings to display, sorted alphabetically by action name
+    # Keybindings to display, grouped by function
     KEYBINDINGS = [
-        ("Space", "Pause"),
         ("n", "Namespace"),
+        ("l", "Labels"),
         ("f", "Filter"),
         ("e", "Exclude"),
-        ("l", "Labels"),
+        ("Space", "Pause/Resume"),
+        ("s", "Auto-scroll"),
+        ("c", "Clear"),
         ("p", "Pods"),
         ("a", "All On"),
         ("z", "All Off"),
@@ -49,6 +52,10 @@ class HelpBar(Static):
         """Update the help bar content on mount."""
         self.update_content()
 
+    def on_resize(self) -> None:
+        """Update the help bar content on resize."""
+        self.update_content()
+
     def update_content(self, extra_info: str = "") -> None:
         """Update the help bar content.
 
@@ -56,13 +63,27 @@ class HelpBar(Static):
             extra_info: Optional extra information to display.
         """
         text = Text()
+        # Use available width or a reasonable default
+        available_width = self.size.width or 80
+        if extra_info:
+            available_width -= len(extra_info) + 5
 
+        current_width = 0
         for i, (key, action) in enumerate(self.KEYBINDINGS):
+            # Calculate width of this item plus separator
+            item = f"[{key}] {action}"
+            item_width = len(item) + (2 if i > 0 else 0)
+
+            if current_width + item_width > available_width:
+                break
+
             if i > 0:
                 text.append("  ", style="dim")
+                current_width += 2
 
             text.append(f"[{key}]", style="bold cyan")
             text.append(f" {action}", style="white")
+            current_width += len(f"[{key}] {action}")
 
         if extra_info:
             text.append("  │  ", style="dim")
@@ -97,29 +118,26 @@ class ExpandedHelp(Static):
     HELP_TEXT = """
 [bold cyan]Keyboard Shortcuts[/]
 
-[bold]Streaming Control[/]
-  [cyan]Space[/]  Pause/resume log streaming
+[bold]Filtering & Context[/]
+  [cyan]n[/]  Namespace filter (supports regex)
+  [cyan]l[/]  Label selector (e.g. app=web)
+  [cyan]f[/]  Filter pattern (regex for pod names)
+  [cyan]e[/]  Exclude pattern (regex for pod names)
 
-[bold]Navigation & Filters[/]
-  [cyan]n[/]  Change namespace filter (supports regex)
-  [cyan]f[/]  Set filter pattern (regex for pod names)
-  [cyan]e[/]  Set exclude pattern (regex for pod names)
-  [cyan]l[/]  Set label selector (e.g., app=web)
+[bold]Streaming & View[/]
+  [cyan]Space[/]  Pause/Resume log streaming
+  [cyan]s[/]      Toggle auto-scroll
+  [cyan]c[/]      Clear log display
 
-[bold]Pod Control[/]
+[bold]Pod Management[/]
   [cyan]p[/]  Toggle pod panel visibility
-  [cyan]a[/]  Enable all pods
-  [cyan]z[/]  Disable all pods
-  [cyan]Enter[/]  Toggle selected pod on/off
+  [cyan]a[/]  Enable all pods (All On)
+  [cyan]z[/]  Disable all pods (All Off)
 
-[bold]View[/]
-  [cyan]c[/]  Clear log display
-  [cyan]s[/]  Toggle auto-scroll
+[bold]System[/]
   [cyan]?[/]  Toggle this help panel
-
-[bold]Application[/]
   [cyan]q[/]  Quit application
-  [cyan]Esc[/]  Close modal/panel
+  [cyan]Esc[/] Close any open modal/panel
 
 [dim]Press [?] or [Esc] to close this help[/]
 """

@@ -140,7 +140,7 @@ class KuloUI:
         max_streams_display = "unlimited" if max_containers == 0 else str(max_containers)
         self.console.print(
             Panel.fit(
-                f"[bold cyan]KuLo[/] - Kubernetes Log Aggregator\n"
+                f"[bold cyan]KuLo[/] - Kubernetes Logs\n"
                 f"[dim]Namespace(s): {ns_display} | Mode: {mode} | "
                 f"Max streams: {max_streams_display}[/]",
                 border_style="cyan",

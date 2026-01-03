@@ -60,7 +60,7 @@ class KuloApp(App):
     with filtering, pod selection, and real-time updates.
     """
 
-    TITLE = "KuLo - Kubernetes Log Aggregator"
+    TITLE = "KuLo - Kubernetes Logs"
     SUB_TITLE = "Interactive Log Viewer"
 
     CSS = """
@@ -96,16 +96,16 @@ class KuloApp(App):
     """
 
     BINDINGS = [
-        Binding("space", "toggle_pause", "Pause/Resume", show=True),
         Binding("n", "namespace", "Namespace", show=True),
+        Binding("l", "labels", "Labels", show=True),
         Binding("f", "filter", "Filter", show=True),
         Binding("e", "exclude", "Exclude", show=True),
-        Binding("l", "labels", "Labels", show=True),
+        Binding("space", "toggle_pause", "Pause/Resume", show=True),
+        Binding("s", "toggle_scroll", "Auto-scroll", show=True),
+        Binding("c", "clear_logs", "Clear", show=True),
         Binding("p", "toggle_pods", "Toggle Pods", show=True),
-        Binding("a", "all_on", "All On", show=False),
-        Binding("z", "all_off", "All Off", show=False),
-        Binding("c", "clear_logs", "Clear", show=False),
-        Binding("s", "toggle_scroll", "Auto-scroll", show=False),
+        Binding("a", "all_on", "All On", show=True),
+        Binding("z", "all_off", "All Off", show=True),
         Binding("question_mark", "help", "Help", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("escape", "close_overlay", "Close", show=False),

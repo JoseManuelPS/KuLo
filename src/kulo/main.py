@@ -1,4 +1,4 @@
-"""KuLo - Kubernetes Log Aggregator.
+"""KuLo - Kubernetes Logs.
 
 Entry point and CLI argument parsing for the KuLo application.
 Orchestrates client, manager, and UI components.
@@ -64,7 +64,7 @@ def print_help() -> None:
     # Logo and title
     console.print(LOGO)
     console.print(
-        f"  [bold]KuLo[/] [dim]v{__version__}[/] · Kubernetes Log Aggregator\n",
+        f"  [bold]KuLo[/] [dim]v{__version__}[/] · Kubernetes Logs\n",
         highlight=False,
     )
     console.print(

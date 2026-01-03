@@ -1,7 +1,7 @@
 [project]
 name = "kulo"
 version = "2.0.0"
-description = "KuLo - Kubernetes Log Aggregator: Visualize K8s logs in an aggregated, filterable, and aesthetically superior manner"
+description = "KuLo - Kubernetes Logs: Visualize K8s logs in an aggregated, filterable, and aesthetically superior manner"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
