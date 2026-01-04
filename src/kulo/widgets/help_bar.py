@@ -24,12 +24,14 @@ class HelpBar(Static):
     """
 
     # Keybindings to display, sorted alphabetically by action name
+    # Keybindings to display, sorted alphabetically by action name
     # Keybindings to display, grouped by function
     KEYBINDINGS = [
         ("n", "Namespace"),
         ("l", "Labels"),
         ("f", "Filter"),
         ("e", "Exclude"),
+        ("m", "Max Cnt"),
         ("Space", "Pause/Resume"),
         ("s", "Auto-scroll"),
         ("c", "Clear"),
@@ -123,6 +125,7 @@ class ExpandedHelp(Static):
   [cyan]l[/]  Label selector (e.g. app=web)
   [cyan]f[/]  Filter pattern (regex for pod names)
   [cyan]e[/]  Exclude pattern (regex for pod names)
+  [cyan]m[/]  Max concurrent container streams (0=unlimited)
 
 [bold]Streaming & View[/]
   [cyan]Space[/]  Pause/Resume log streaming

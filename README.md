@@ -91,7 +91,7 @@ kulo -n production -l app=api -f 'api-v2.*'
 kulo --snap -s 1h -t 100
 
 # Limit concurrent streams (for large deployments)
-kulo --max-containers 20
+kulo -m 20
 ```
 
 ## Interactive TUI Mode
@@ -117,6 +117,7 @@ KuLo launches an interactive TUI by default (streaming mode). Use `--snap` for s
 | `f` | Set filter pattern for pod names |
 | `e` | Set exclude pattern for pod names |
 | `l` | Set Kubernetes label selector |
+| `m` | Set max concurrent containers limit |
 | `p` | Toggle pod panel visibility |
 | `a` | Enable all pods |
 | `z` | Disable all pods |
@@ -128,11 +129,14 @@ KuLo launches an interactive TUI by default (streaming mode). Use `--snap` for s
 
 ### Pod Panel
 
-The right panel shows all discovered pods with their assigned colors:
-- **● Filled circle**: Pod is active (logs shown)
-- **○ Empty circle**: Pod is disabled (logs hidden)
+The right panel shows all discovered pods and containers:
+- **Multi-container Pods**: Shown with a colored dot `●`. Containers are listed below, indented.
+- **Single-container Pods**: Shown as a single entry with a colored dot `●`.
+- **Visibility**:
+    - **`>` Indented items**: Individual containers.
+    - **`●` Colored / `○` Empty**: Indicates if the container/pod logs are visible.
 
-Click on a pod or press Enter to toggle its visibility.
+Click on a container or press Enter to toggle its visibility individually. Toggling a pod header is currently disabled to encourage granular control.
 
 ## CLI Reference
 
@@ -147,7 +151,7 @@ Click on a pod or press Enter to toggle its visibility.
 | `--snap` | - | flag | false | Snapshot mode: fetch logs once (CLI output) |
 | `--since` | `-s` | str | 10m | Time window (e.g., 30s, 5m, 1h, 2d) |
 | `--tail` | `-t` | int | 25 | Initial lines per container |
-| `--max-containers` | - | int | 10 | Maximum concurrent streams (0 = unlimited) |
+| `--max-containers` | `-m` | int | 10 | Maximum concurrent streams (0 = unlimited) |
 | `--no-color-logs` | - | flag | false | Disable log message colorization (plain output) |
 | `--verbose` | `-v` | flag | false | Increase verbosity (-v, -vv) |
 
@@ -164,7 +168,7 @@ All log prefixes are padded to the same width based on the containers being disp
 ### Smart Omission
 
 - **Single namespace**: The `[NAMESPACE]` prefix is omitted
-- **Single container per pod**: The `(CONTAINER)` suffix is omitted
+- **Single container pods**: The `(CONTAINER)` suffix is omitted for pods with only one container, even if other pods have multiple containers
 
 ### Deterministic Colors
 

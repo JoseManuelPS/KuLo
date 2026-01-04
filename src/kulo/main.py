@@ -106,7 +106,7 @@ def print_help() -> None:
     options_table.add_column("Description")
     options_table.add_row("-s, --since DURATION", "Show logs since duration [dim](default: 10m)[/]")
     options_table.add_row("-t, --tail N", "Initial lines to show [dim](default: 25)[/]")
-    options_table.add_row("--max-containers N", "Max concurrent streams [dim](default: 10, 0=unlimited)[/]")
+    options_table.add_row("-m, --max-containers N", "Max concurrent streams [dim](default: 10, 0=unlimited)[/]")
     options_table.add_row("-v, --verbose", "Increase verbosity [dim](-v info, -vv debug)[/]")
     console.print(options_table)
     console.print()
@@ -259,7 +259,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Throttling
     parser.add_argument(
-        "--max-containers",
+        "-m", "--max-containers",
         type=int,
         default=10,
         metavar="N",

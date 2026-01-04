@@ -350,6 +350,7 @@ async def create_pod(
     pod_name: str,
     containers: List[client.V1Container],
     labels: Dict[str, str],
+    init_containers: Optional[List[client.V1Container]] = None,
     annotations: Optional[Dict[str, str]] = None,
     wait_timeout: int = DEFAULT_WAIT_TIMEOUT,
     check_containers: bool = True,
@@ -364,6 +365,7 @@ async def create_pod(
         metadata=create_pod_metadata(pod_name, namespace, labels, annotations),
         spec=client.V1PodSpec(
             containers=containers,
+            init_containers=init_containers,
             restart_policy="Always"
         )
     )
@@ -410,7 +412,7 @@ def create_json_logger_1_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for JSON Logger 1 pod."""
     pod_name = "json-logger-1"
     
@@ -430,14 +432,14 @@ done"""
     )
     
     labels = {"app": "json-logger", "type": "test"}
-    return pod_name, [container], labels
+    return pod_name, [container], labels, None
 
 
 def create_json_logger_2_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for JSON Logger 2 pod."""
     pod_name = "json-logger-2"
     
@@ -460,14 +462,14 @@ done"""
     )
     
     labels = {"app": "json-logger", "type": "test"}
-    return pod_name, [container], labels
+    return pod_name, [container], labels, None
 
 
 def create_plain_logger_1_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for Plain Text Logger 1 pod."""
     pod_name = "plain-logger-1"
     
@@ -487,14 +489,14 @@ done"""
     )
     
     labels = {"app": "plain-logger", "type": "test"}
-    return pod_name, [container], labels
+    return pod_name, [container], labels, None
 
 
 def create_plain_logger_2_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for Plain Text Logger 2 pod."""
     pod_name = "plain-logger-2"
     
@@ -520,14 +522,14 @@ done"""
     )
     
     labels = {"app": "plain-logger", "type": "test"}
-    return pod_name, [container], labels
+    return pod_name, [container], labels, None
 
 
 def create_mixed_logger_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for Mixed Logger pod."""
     pod_name = "mixed-logger-1"
     
@@ -551,14 +553,14 @@ done"""
     )
     
     labels = {"app": "mixed-logger", "type": "test"}
-    return pod_name, [container], labels
+    return pod_name, [container], labels, None
 
 
 def create_multi_container_pod_spec(
     image: str = DEFAULT_IMAGE,
     resources: Optional[client.V1ResourceRequirements] = None,
     security_context: Optional[client.V1SecurityContext] = None
-) -> Tuple[str, List[client.V1Container], Dict[str, str]]:
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
     """Create spec for multi-container pod."""
     pod_name = "multi-container-pod"
     
@@ -593,7 +595,101 @@ done"""
     )
     
     labels = {"app": "multi-container", "type": "test"}
-    return pod_name, [main_container, sidecar_container], labels
+    return pod_name, [main_container, sidecar_container], labels, None
+
+
+def create_init_container_pod_spec(
+    image: str = DEFAULT_IMAGE,
+    resources: Optional[client.V1ResourceRequirements] = None,
+    security_context: Optional[client.V1SecurityContext] = None
+) -> Tuple[str, List[client.V1Container], Dict[str, str], Optional[List[client.V1Container]]]:
+    """Create spec for pod with init containers."""
+    pod_name = "init-container-pod"
+    
+    # Init container that runs for a few seconds
+    init_container = create_container(
+        name="init-setup",
+        image=image,
+        command=["/bin/sh", "-c"],
+        args=["echo '[Init] Setting up environment...'; sleep 10; echo '[Init] Setup complete'"],
+        resources=resources,
+        security_context=security_context
+    )
+    
+    # Main container that starts after init
+    main_container = create_container(
+        name="main",
+        image=image,
+        command=["/bin/sh", "-c"],
+        args=[
+            """i=0; while true; do
+  echo "Main container running after init - Message $i"
+  i=$((i + 1))
+  sleep 2
+done"""
+        ],
+        resources=resources,
+        security_context=security_context
+    )
+    
+    labels = {"app": "init-demo", "type": "test"}
+    return pod_name, [main_container], labels, [init_container]
+
+
+async def add_ephemeral_container(
+    api: client.CoreV1Api,
+    namespace: str,
+    pod_name: str,
+    image: str = DEFAULT_IMAGE
+) -> bool:
+    """Add an ephemeral container to a running pod."""
+    logger.info(f"Adding ephemeral container to pod '{pod_name}'...")
+    try:
+        # Define ephemeral container
+        # Note: In kubernetes-asyncio, we use V1EphemeralContainer
+        ephemeral = client.V1EphemeralContainer(
+            name="debugger",
+            image=image,
+            command=["/bin/sh", "-c"],
+            args=["""i=0; while true; do 
+  echo "[Ephemeral] Debugger active - Batch $i"
+  i=$((i + 1))
+  sleep 5
+done"""],
+            stdin=True,
+            tty=True
+        )
+        
+        # Read the pod to get its current spec
+        pod = await api.read_namespaced_pod(name=pod_name, namespace=namespace)
+        current_ephemeral = pod.spec.ephemeral_containers or []
+        
+        # Patch the ephemeralcontainers subresource
+        # We need a Pod object with just the ephemeral containers in the spec
+        patch_body = client.V1Pod(
+            spec=client.V1PodSpec(
+                ephemeral_containers=current_ephemeral + [ephemeral]
+            )
+        )
+        
+        await api.patch_namespaced_pod_ephemeralcontainers(
+            name=pod_name,
+            namespace=namespace,
+            body=patch_body
+        )
+        logger.info(f"Successfully added ephemeral container to '{pod_name}'")
+        return True
+    except client.ApiException as e:
+        if e.status == 404:
+            logger.warning(f"Pod '{pod_name}' not found for ephemeral container attachment")
+        elif e.status == 422:
+            logger.warning(f"Feature EphemeralContainers probably not enabled or invalid spec: {e}")
+        else:
+            logger.warning(f"Error adding ephemeral container: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Unexpected error adding ephemeral container: {e}")
+        return False
 
 
 # ============================================================================
@@ -606,6 +702,7 @@ async def create_deployment(
     deployment_name: str,
     containers: List[client.V1Container],
     labels: Dict[str, str],
+    init_containers: Optional[List[client.V1Container]] = None,
     annotations: Optional[Dict[str, str]] = None,
     replicas: int = 1,
     wait_timeout: int = DEFAULT_WAIT_TIMEOUT
@@ -620,6 +717,7 @@ async def create_deployment(
                 metadata=client.V1ObjectMeta(labels=labels),
                 spec=client.V1PodSpec(
                     containers=containers,
+                    init_containers=init_containers,
                     restart_policy="Always"
                 )
             )
@@ -710,6 +808,7 @@ async def create_daemonset(
     daemonset_name: str,
     containers: List[client.V1Container],
     labels: Dict[str, str],
+    init_containers: Optional[List[client.V1Container]] = None,
     annotations: Optional[Dict[str, str]] = None,
     wait_timeout: int = DEFAULT_WAIT_TIMEOUT
 ) -> Tuple[bool, Optional[str]]:
@@ -722,6 +821,7 @@ async def create_daemonset(
                 metadata=client.V1ObjectMeta(labels=labels),
                 spec=client.V1PodSpec(
                     containers=containers,
+                    init_containers=init_containers,
                     restart_policy="Always"
                 )
             )
@@ -773,6 +873,7 @@ async def create_all_pods(
         create_plain_logger_2_spec(image, resources, security_context),
         create_mixed_logger_spec(image, resources, security_context),
         create_multi_container_pod_spec(image, resources, security_context),
+        create_init_container_pod_spec(image, resources, security_context),
     ]
     
     apps_api = client.AppsV1Api(api.api_client)
@@ -780,10 +881,11 @@ async def create_all_pods(
     if use_deployments:
         # Use Deployments API
         results = []
-        for pod_name, containers, labels in pod_specs:
+        for pod_name, containers, labels, init_containers in pod_specs:
             try:
                 success, name = await create_deployment(
                     apps_api, namespace, pod_name, containers, labels,
+                    init_containers=init_containers,
                     replicas=replicas, wait_timeout=wait_timeout
                 )
                 results.append((success, name, None))
@@ -797,10 +899,11 @@ async def create_all_pods(
     elif use_statefulsets:
         # Use StatefulSets API
         results = []
-        for pod_name, containers, labels in pod_specs:
+        for pod_name, containers, labels, init_containers in pod_specs:
             try:
                 success, name = await create_statefulset(
                     apps_api, api, namespace, pod_name, containers, labels,
+                    init_containers=init_containers,
                     replicas=replicas, wait_timeout=wait_timeout
                 )
                 results.append((success, name, None))
@@ -814,10 +917,11 @@ async def create_all_pods(
     elif use_daemonsets:
         # Use DaemonSets API
         results = []
-        for pod_name, containers, labels in pod_specs:
+        for pod_name, containers, labels, init_containers in pod_specs:
             try:
                 success, name = await create_daemonset(
                     apps_api, namespace, pod_name, containers, labels,
+                    init_containers=init_containers,
                     wait_timeout=wait_timeout
                 )
                 results.append((success, name, None))
@@ -833,27 +937,29 @@ async def create_all_pods(
         if parallel > 1:
             semaphore = asyncio.Semaphore(parallel)
             
-            async def create_with_semaphore(pod_name, containers, labels):
+            async def create_with_semaphore(pod_name, containers, labels, init_containers=None):
                 async with semaphore:
                     return await create_pod(
                         api, namespace, pod_name, containers, labels,
+                        init_containers=init_containers,
                         wait_timeout=wait_timeout,
                         check_containers=check_containers,
                         continue_on_error=continue_on_error
                     )
             
             tasks = [
-                create_with_semaphore(pod_name, containers, labels)
-                for pod_name, containers, labels in pod_specs
+                create_with_semaphore(pod_name, containers, labels, init_containers)
+                for pod_name, containers, labels, init_containers in pod_specs
             ]
             return await asyncio.gather(*tasks, return_exceptions=False)
         else:
             # Sequential creation
             results = []
-            for pod_name, containers, labels in pod_specs:
+            for pod_name, containers, labels, init_containers in pod_specs:
                 try:
                     result = await create_pod(
                         api, namespace, pod_name, containers, labels,
+                        init_containers=init_containers,
                         wait_timeout=wait_timeout,
                         check_containers=check_containers,
                         continue_on_error=continue_on_error
@@ -1208,6 +1314,11 @@ Examples:
                 replicas=args.replicas
             )
             
+            # Add ephemeral container to multi-container-pod as a test
+            multi_pod_result = next((r for r in results if r[1] == "multi-container-pod"), None)
+            if multi_pod_result and multi_pod_result[0]:
+                await add_ephemeral_container(api, namespace, "multi-container-pod", image=args.image)
+            
             # Print status summary
             print_status_summary(results)
             
@@ -1258,6 +1369,7 @@ Examples:
                 logger.info(f"  kulo -n {namespace} -l app=plain-logger -f")
                 logger.info(f"  kulo -n {namespace} -l app=mixed-logger -f")
                 logger.info(f"  kulo -n {namespace} -l app=multi-container -f")
+                logger.info(f"  kulo -n {namespace} -l app=init-demo -f")
                 logger.info(f"To cleanup, run:")
                 logger.info(f"  python scripts/setup_demo.py -n {namespace} --cleanup")
                 if args.force:

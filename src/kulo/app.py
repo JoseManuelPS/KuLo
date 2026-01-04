@@ -22,7 +22,7 @@ from kulo.state import AppState
 from kulo.utils import compile_patterns, is_regex_pattern, matches_any
 from kulo.widgets import HelpBar, LogPanel, PodLegend
 from kulo.widgets.help_bar import ExpandedHelp
-from kulo.widgets.pod_legend import PodToggled
+from kulo.widgets.pod_legend import ContainerToggled
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ class KuloApp(App):
         Binding("l", "labels", "Labels", show=True),
         Binding("f", "filter", "Filter", show=True),
         Binding("e", "exclude", "Exclude", show=True),
+        Binding("m", "max_containers", "Max Containers", show=True),
         Binding("space", "toggle_pause", "Pause/Resume", show=True),
         Binding("s", "toggle_scroll", "Auto-scroll", show=True),
         Binding("c", "clear_logs", "Clear", show=True),
@@ -523,6 +524,28 @@ class KuloApp(App):
             on_exclude_result,
         )
 
+    def action_max_containers(self) -> None:
+        """Open max containers modal."""
+
+        def on_max_containers_result(result: str | None) -> None:
+            if result is not None:
+                try:
+                    value = int(result)
+                    self.state.max_containers = value
+                    msg = "Max containers: unlimited" if value == 0 else f"Max containers: {value}"
+                    self.notify(msg)
+                    self._restart_streaming_sync()
+                except ValueError:
+                    self.notify("Invalid integer value", severity="error")
+
+        self.push_screen(
+            FilterModal(
+                filter_type="max_containers",
+                current_value=str(self.state.max_containers),
+            ),
+            on_max_containers_result,
+        )
+
     def action_labels(self) -> None:
         """Open label selector modal."""
 
@@ -619,15 +642,15 @@ class KuloApp(App):
         # Restart
         self._initialize_and_stream()
 
-    @on(PodToggled)
-    def on_pod_toggled(self, event: PodToggled) -> None:
-        """Handle pod toggle events.
+    @on(ContainerToggled)
+    def on_container_toggled(self, event: ContainerToggled) -> None:
+        """Handle container toggle events.
 
         Args:
-            event: The pod toggled event.
+            event: The container toggled event.
         """
         status = "enabled" if event.enabled else "disabled"
-        self.notify(f"{event.pod_name} {status}")
+        self.notify(f"{event.pod_name}/{event.container_name} {status}")
 
 
 def run_tui(

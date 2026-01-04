@@ -427,7 +427,15 @@ class TestKuloUI:
 
         ui = KuloUI()
         ui.configure_output(["production"], [sample_single_container_pod])
-        assert ui.show_container is False
+        ui = KuloUI()
+        ui.configure_output(["production"], [sample_single_container_pod])
+        # Changed behavior: show_container remains True globally (as default or if any pod has >1 container?)
+        # Actually logic is: self.show_container = any(...) -> wait, I REMOVED that line!
+        # So show_container defaults to True (from __init__).
+        # But for this specific pod it should be hidden in output.
+        # This test checks the ATTRIBUTE, which is now just a global flag.
+        # So it should be True (default).
+        assert ui.show_container is True
 
     def test_configure_output_multiple_containers(
         self,
@@ -439,6 +447,53 @@ class TestKuloUI:
         ui = KuloUI()
         ui.configure_output(["default"], [sample_pod_info])
         assert ui.show_container is True
+
+    def test_configure_output_mixed_containers(
+        self,
+        sample_pod_info: PodInfo,  # Multi-container
+        sample_single_container_pod: PodInfo,  # Single-container
+    ) -> None:
+        """Test output configuration with mixed single and multi container pods."""
+        from kulo.ui import KuloUI
+
+        ui = KuloUI()
+        # Should enable global show_container because one pod has multiple
+        ui.configure_output(
+            ["default"],
+            [sample_pod_info, sample_single_container_pod],
+        )
+        assert ui.show_container is True
+
+        # Verify prefix width calculation logic
+        # Multi-container pod should include container name width
+        width_multi = ui._calculate_prefix_width(
+            sample_pod_info.namespace,
+            sample_pod_info.name,
+            "main",
+        )
+        assert width_multi > len(sample_pod_info.name)
+
+        # Single-container pod should NOT include container name width
+        # (even though global show_container is True)
+        width_single = ui._calculate_prefix_width(
+            sample_single_container_pod.namespace,
+            sample_single_container_pod.name,
+            "main",
+        )
+        # Should be just "[namespace] podname" (plus regex overhead/padding logic etc)
+        # But specifically checking it DOESN'T have the container part
+        # Logic: [namespace] + space + pod_name
+        # namespace=default (len 9 with brackets + space), pod_name=backend-xyz (len 11)
+        # Total = 20.
+        # If it had container it would be + " (main)" = +7 -> 27.
+        # Total = 20.
+        # If it had container it would be + " (main)" = +7 -> 27.
+        
+        # NOTE: self.show_namespace will be False because we passed only ["default"] list of length 1!
+        # So expected is just len(pod_name) = 17.
+        # "api-server-xyz789" is 17 chars.
+        expected_single = len(sample_single_container_pod.name)
+        assert width_single == expected_single
 
     def test_try_parse_json_valid(self) -> None:
         """Test JSON parsing with valid JSON."""

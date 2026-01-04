@@ -111,7 +111,10 @@ class LogPanel(RichLog):
             entry: The log entry to display.
         """
         # Filter out inactive pods
-        if self._state and not self._state.is_pod_active(entry.pod_name):
+        # Filter out inactive pods/containers
+        if self._state and not self._state.is_container_active(
+            entry.namespace, entry.pod_name, entry.container_name
+        ):
             return
 
         # Format and display

@@ -103,9 +103,6 @@ class KuloUI:
             )
             self.pod_containers[pod.name] = total_containers
 
-        # Show container only if any pod has multiple containers
-        self.show_container = any(count > 1 for count in self.pod_containers.values())
-
         # Initialize color assignments with sorted pod names for deterministic coloring
         pod_names = [pod.name for pod in pods]
         self._color_assigner.initialize(pod_names)
@@ -299,7 +296,11 @@ class KuloUI:
         prefix_parts.append(entry.pod_name)
 
         if self.show_container:
-            prefix_parts.append(f" ({entry.container_name})")
+            # Only show container if this specific pod has multiple containers
+            # or if we don't know the container count (e.g. streaming new pod)
+            pod_container_count = self.pod_containers.get(entry.pod_name)
+            if pod_container_count is None or pod_container_count > 1:
+                prefix_parts.append(f" ({entry.container_name})")
 
         # Add prefix with pod color, padded to align with other entries
         prefix = "".join(prefix_parts)
@@ -480,8 +481,13 @@ class KuloUI:
         width += len(pod_name)
 
         if self.show_container:
-            # Format: " (container_name)"
-            width += len(f" ({container_name})")
+            # Check if this specific pod has multiple containers
+            # or if we don't know the container count (e.g. streaming new pod)
+            # Use .get() to avoid KeyError if pod not in map (though it should be)
+            pod_container_count = self.pod_containers.get(pod_name)
+            if pod_container_count is None or pod_container_count > 1:
+                # Format: " (container_name)"
+                width += len(f" ({container_name})")
 
         return width
 

@@ -23,7 +23,7 @@ kulo/
 │   ├── state.py     ◄────────────────────┤ imports (TUI)
 │   │   • AppState (reactive state)       │
 │   │   • Filter management               │
-│   │   • Pod activation tracking         │
+│   │   • Container activation tracking   │
 │   │                                     │
 │   ├── widgets/     ◄────────────────────┤ imports (TUI)
 │   │   • LogPanel (RichLog-based)        │
@@ -122,9 +122,10 @@ KuLo defaults to an interactive TUI mode using the Textual framework (use `--sna
 │  ┌───────────────────────────────────┬───────────────────────────┐  │
 │  │           LogPanel                │       PodLegend           │  │
 │  │    (RichLog widget, scrollable)   │   (OptionList widget)     │  │
-│  │                                   │   • ● pod-a (enabled)     │  │
-│  │  [api][main] | Request received   │   • ○ pod-b (disabled)    │  │
-│  │  [web][nginx] | GET /index 200    │   • ● pod-c (enabled)     │  │
+│  │                                   │   ● pod-a                 │  │
+│  │  [api][main] | Request received   │     > main (enabled)      │  │
+│  │  [web][nginx] | GET /index 200    │   ● pod-b                 │  │
+│  │                                   │     > sidecar (disabled)  │  │
 │  │                                   │                           │  │
 │  └───────────────────────────────────┴───────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────┐  │
@@ -136,11 +137,11 @@ KuLo defaults to an interactive TUI mode using the Textual framework (use `--sna
 
 **Key TUI Components:**
 
-1. **AppState** (`state.py`): Centralized reactive state for filters and pod activation
-2. **LogPanel** (`widgets/log_panel.py`): Virtual-scrolling log display with pod filtering
-3. **PodLegend** (`widgets/pod_legend.py`): Interactive pod list with toggle functionality
+1. **AppState** (`state.py`): Centralized reactive state for filters and container activation
+2. **LogPanel** (`widgets/log_panel.py`): Virtual-scrolling log display with container filtering
+3. **PodLegend** (`widgets/pod_legend.py`): Interactive list with granular container toggling
 4. **HelpBar** (`widgets/help_bar.py`): Keybinding hints and mode indicator
-5. **Modals** (`modals/`): Input dialogs for filter editing
+5. **Modals** (`modals/`): Input dialogs for filter editing (includes Max Containers)
 
 **Mode Selection Logic:**
 
@@ -273,7 +274,13 @@ if self._max_prefix_width > 0:
     prefix = prefix.ljust(self._max_prefix_width)  # Pad to align
 ```
 
-This ensures all log lines align regardless of pod/container name lengths. The prefix width is calculated only from containers that will actually be displayed (after applying `--max-containers` limit).
+    prefix = prefix.ljust(self._max_prefix_width)  # Pad to align
+```
+
+This ensures all log lines align regardless of pod/container name lengths. The prefix width is calculated dynamically:
+- Only displayed containers contribute to the max width
+- Single-container pods do not add container name width
+- Multi-container pods add `(container_name)` width
 
 ### 7. LogRenderer Protocol for UI Abstraction
 

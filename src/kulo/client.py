@@ -261,6 +261,22 @@ class KuloClient:
                 if stop_event and stop_event.is_set():
                     return
 
+                # Check if container has terminated successfully
+                # If so, we should not reconnect
+                try:
+                    pod = await self.core_api.read_namespaced_pod(
+                        name=container.pod_name,
+                        namespace=container.namespace,
+                    )
+                    if self._is_container_terminated_success(pod, container.container_name):
+                        logger.debug(
+                            f"Container {container.unique_id} finished successfully, stopping stream"
+                        )
+                        return
+                except (ApiException, KuloClientError):
+                    # If we can't check status, fall through to retry logic
+                    pass
+
             except PodNotFoundError:
                 # Pod was deleted - don't retry
                 logger.info(
@@ -468,3 +484,32 @@ class KuloClient:
                 ) from e
             raise KuloClientError(f"Failed to list namespaces: {e}") from e
 
+            raise KuloClientError(f"Failed to list namespaces: {e}") from e
+
+    def _is_container_terminated_success(self, pod: client.V1Pod, container_name: str) -> bool:
+        """Check if a container has terminated with exit code 0.
+
+        Args:
+            pod: The V1Pod object.
+            container_name: The name of the container to check.
+
+        Returns:
+            True if the container is Terminated with exit code 0.
+        """
+        if not pod.status:
+            return False
+
+        # Check all container status lists
+        all_statuses = (
+            (pod.status.container_statuses or []) +
+            (pod.status.init_container_statuses or []) +
+            (pod.status.ephemeral_container_statuses or [])
+        )
+
+        for status in all_statuses:
+            if status.name == container_name:
+                if status.state and status.state.terminated:
+                    return status.state.terminated.exit_code == 0
+                return False
+        
+        return False

@@ -129,6 +129,16 @@ class FilterModal(ModalScreen[str | None]):
             "placeholder": "app=web, tier=frontend",
             "is_regex": False,
         },
+        "max_containers": {
+            "title": "Max Containers",
+            "help": (
+                "Enter the maximum number of concurrent container streams.\n"
+                "0 means unlimited."
+            ),
+            "placeholder": "10",
+            "is_regex": False,
+            "is_integer": True,
+        },
     }
 
     def __init__(
@@ -198,6 +208,23 @@ class FilterModal(ModalScreen[str | None]):
             self._is_valid = True
             status_widget.update("")
             status_widget.remove_class("error", "valid")
+            return
+
+        if self._config.get("is_integer"):
+            try:
+                val = int(value)
+                if val < 0:
+                    raise ValueError("Must be non-negative")
+                self._is_valid = True
+                status_widget.update(f"Valid: {val}")
+                status_widget.remove_class("error")
+                status_widget.add_class("valid")
+            except ValueError:
+                self._is_valid = False
+                self._error_message = "Must be a non-negative integer"
+                status_widget.update(f"Invalid: {self._error_message}")
+                status_widget.remove_class("valid")
+                status_widget.add_class("error")
             return
 
         if not self._config["is_regex"]:

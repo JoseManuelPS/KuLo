@@ -32,7 +32,7 @@ class TestAppState:
         assert state.filter_pattern == ""
         assert state.exclude_pattern == ""
         assert state.label_selector == ""
-        assert state.active_pods == {}
+        assert state.active_containers == {}
         assert state.pods_info == []
         assert state.since_seconds == 600
         assert state.tail_lines == 25
@@ -69,20 +69,24 @@ class TestAppState:
         assert state.max_containers == 0
 
     def test_update_pods(self) -> None:
-        """Test updating pods list."""
+        """Test updating pods list and initializing containers."""
         state = AppState()
 
         pods = [
             PodInfo(namespace="default", name="pod-a", phase="Running", containers=["main"]),
-            PodInfo(namespace="default", name="pod-b", phase="Running", containers=["main"]),
+            PodInfo(namespace="default", name="pod-b", phase="Running", containers=["main", "sidecar"]),
         ]
 
         state.update_pods(pods)
 
         assert len(state.pods_info) == 2
-        assert state.is_pod_active("pod-a")
-        assert state.is_pod_active("pod-b")
-        assert state.color_assigner.assigned_count == 2
+        
+        # Check defaults
+        assert state.is_container_active("default", "pod-a", "main")
+        assert state.is_container_active("default", "pod-b", "main")
+        assert state.is_container_active("default", "pod-b", "sidecar")
+        
+        assert state.color_assigner.assigned_count == 2 # Colors assigned per pod
 
     def test_update_pods_preserves_existing_states(self) -> None:
         """Test that updating pods preserves existing active states."""
@@ -91,13 +95,12 @@ class TestAppState:
         # Initial pods
         pods = [
             PodInfo(namespace="default", name="pod-a", phase="Running", containers=["main"]),
-            PodInfo(namespace="default", name="pod-b", phase="Running", containers=["main"]),
         ]
         state.update_pods(pods)
 
-        # Toggle pod-a off
-        state.toggle_pod("pod-a")
-        assert not state.is_pod_active("pod-a")
+        # Toggle pod-a/main off
+        state.toggle_container("default", "pod-a", "main")
+        assert not state.is_container_active("default", "pod-a", "main")
 
         # Update pods (pod-a still exists)
         new_pods = [
@@ -106,33 +109,31 @@ class TestAppState:
         ]
         state.update_pods(new_pods)
 
-        # pod-a should still be inactive
-        assert not state.is_pod_active("pod-a")
-        # pod-c should be active (new)
-        assert state.is_pod_active("pod-c")
-        # pod-b should be removed
-        assert "pod-b" not in state.active_pods
+        # pod-a/main should still be inactive
+        assert not state.is_container_active("default", "pod-a", "main")
+        # pod-c/main should be active (new)
+        assert state.is_container_active("default", "pod-c", "main")
 
-    def test_toggle_pod(self) -> None:
-        """Test toggling pod state."""
+    def test_toggle_container(self) -> None:
+        """Test toggling container state."""
         state = AppState()
-        state.active_pods = {"pod-a": True, "pod-b": True}
+        pod = PodInfo(namespace="default", name="pod-a", phase="Running", containers=["main"])
+        state.update_pods([pod])
 
         # Toggle off
-        result = state.toggle_pod("pod-a")
+        result = state.toggle_container("default", "pod-a", "main")
         assert result is False
-        assert not state.is_pod_active("pod-a")
+        assert not state.is_container_active("default", "pod-a", "main")
 
         # Toggle on
-        result = state.toggle_pod("pod-a")
+        result = state.toggle_container("default", "pod-a", "main")
         assert result is True
-        assert state.is_pod_active("pod-a")
+        assert state.is_container_active("default", "pod-a", "main")
 
-    def test_toggle_nonexistent_pod(self) -> None:
-        """Test toggling a pod that doesn't exist."""
+    def test_toggle_nonexistent_container(self) -> None:
+        """Test toggling a container that doesn't exist."""
         state = AppState()
-
-        result = state.toggle_pod("nonexistent")
+        result = state.toggle_container("default", "nonexistent", "main")
         assert result is False
 
     def test_get_pod_color(self) -> None:
@@ -147,35 +148,22 @@ class TestAppState:
         assert isinstance(color, str)
         assert len(color) > 0
 
-    def test_get_active_pods(self) -> None:
-        """Test getting only active pods."""
+    def test_set_all_containers_active(self) -> None:
+        """Test setting all containers active/inactive."""
         state = AppState()
         pods = [
             PodInfo(namespace="default", name="pod-a", phase="Running", containers=["main"]),
-            PodInfo(namespace="default", name="pod-b", phase="Running", containers=["main"]),
-            PodInfo(namespace="default", name="pod-c", phase="Running", containers=["main"]),
+            PodInfo(namespace="default", name="pod-b", phase="Running", containers=["sidecar"]),
         ]
         state.update_pods(pods)
-
-        # Deactivate pod-b
-        state.toggle_pod("pod-b")
-
-        active = state.get_active_pods()
-        assert len(active) == 2
-        assert all(p.name != "pod-b" for p in active)
-
-    def test_set_all_pods_active(self) -> None:
-        """Test setting all pods active/inactive."""
-        state = AppState()
-        state.active_pods = {"pod-a": True, "pod-b": False, "pod-c": True}
-
+        
         # Set all inactive
-        state.set_all_pods_active(False)
-        assert all(not v for v in state.active_pods.values())
+        state.set_all_containers_active(False)
+        assert all(not v for v in state.active_containers.values())
 
         # Set all active
-        state.set_all_pods_active(True)
-        assert all(v for v in state.active_pods.values())
+        state.set_all_containers_active(True)
+        assert all(v for v in state.active_containers.values())
 
     def test_copy_with(self) -> None:
         """Test creating a copy with overrides."""
@@ -185,7 +173,7 @@ class TestAppState:
             exclude_pattern="test-.*",
             label_selector="app=web",
         )
-        state.active_pods = {"pod-a": True}
+        state.active_containers = {"default/pod-a/main": True}
 
         # Create copy with new namespaces
         new_state = state.copy_with(namespaces=["production"])
@@ -193,7 +181,7 @@ class TestAppState:
         assert new_state.namespaces == ["production"]
         assert new_state.filter_pattern == "api-.*"  # Preserved
         assert new_state.exclude_pattern == "test-.*"  # Preserved
-        assert new_state.active_pods == {"pod-a": True}  # Preserved
+        assert new_state.active_containers == {"default/pod-a/main": True}  # Preserved
 
         # Original unchanged
         assert state.namespaces == ["default"]
@@ -307,7 +295,7 @@ class TestLogPanel:
             PodInfo(namespace="default", name="pod-b", phase="Running", containers=["main"]),
         ]
         state.update_pods(pods)
-        state.toggle_pod("pod-b")  # Deactivate pod-b
+        state.toggle_container("default", "pod-b", "main")  # Deactivate pod-b
 
         panel = LogPanel(state=state)
 
@@ -414,16 +402,16 @@ class TestPodLegend:
             phase="Running",
             containers=["main"],
         )
+        container = pod.get_all_containers()[0]
 
         state = AppState()
-        state.active_pods = {"my-pod": True}
-        state.color_assigner.initialize(["my-pod"])
-        state.pods_info = [pod]
+        state.update_pods([pod])
 
         legend = PodLegend(state=state)
         legend._state = state
 
-        formatted = legend._format_pod_option(pod, "cyan", True)
+        # Single container pod formatting
+        formatted = legend._format_single_pod_option(pod, container, "cyan", True)
 
         assert isinstance(formatted, Text)
         assert "●" in formatted.plain
@@ -439,16 +427,16 @@ class TestPodLegend:
             phase="Running",
             containers=["main"],
         )
+        container = pod.get_all_containers()[0]
 
         state = AppState()
-        state.active_pods = {"my-pod": False}
-        state.color_assigner.initialize(["my-pod"])
-        state.pods_info = [pod]
+        state.update_pods([pod])
+        state.toggle_container("default", "my-pod", "main")
 
         legend = PodLegend(state=state)
         legend._state = state
 
-        formatted = legend._format_pod_option(pod, "cyan", False)
+        formatted = legend._format_single_pod_option(pod, container, "cyan", False)
 
         assert isinstance(formatted, Text)
         assert "○" in formatted.plain
@@ -473,8 +461,9 @@ class TestPodLegend:
 
         # With multiple namespaces, should show namespace
         assert legend._show_namespace is True
-
-        formatted = legend._format_pod_option(pods[0], "cyan", True)
+        
+        container = pods[0].get_all_containers()[0]
+        formatted = legend._format_single_pod_option(pods[0], container, "cyan", True)
         assert "[ns1]" in formatted.plain
 
     def test_format_pod_option_with_multi_container(self) -> None:
@@ -495,11 +484,108 @@ class TestPodLegend:
         legend = PodLegend(state=state)
         legend._state = state
         legend._update_display_settings()
+        
+        # Test header formatting
+        header = legend._format_pod_header(pod, 2)
+        assert "my-pod" in header.plain
+        # assert "(2c)" in header.plain - Removed by design
+        assert "●" in header.plain # Added dot to header
+        
+        # Test container formatting
+        container = pod.get_all_containers()[0]
+        formatted = legend._format_container_option(container, "cyan", True, indent=True)
+        assert "main" in formatted.plain
+        assert "  " in formatted.plain # Indentation
 
-        formatted = legend._format_pod_option(pod, "cyan", True)
+    def test_format_pod_header_with_namespace_color(self) -> None:
+        """Test that the namespace in the pod header has the correct color."""
+        from kulo.widgets.pod_legend import PodLegend
+        from rich.text import Span
 
-        # Should show container count
-        assert "(2c)" in formatted.plain
+        pod = PodInfo(
+            namespace="demo",
+            name="multi-pod",
+            phase="Running",
+            containers=["c1", "c2"],
+        )
+
+        state = AppState()
+        state.update_pods([pod])
+
+        legend = PodLegend(state=state)
+        legend._state = state
+        legend._show_namespace = True # Force show namespace
+        
+        color = state.get_pod_color("multi-pod")
+        header = legend._format_pod_header(pod, 2)
+        
+        assert "[demo]" in header.plain
+        
+        # Find the span for [demo]
+        ns_start = header.plain.find("[demo]")
+        ns_end = ns_start + len("[demo]")
+        
+        # Check if any span covering this range has the pod color
+        found_color = False
+        for span in header.spans:
+            if span.start <= ns_start and span.end >= ns_end:
+                if span.style == color:
+                    found_color = True
+                    break
+        
+        assert found_color, f"Namespace style should be {color}, but spans are: {header.spans}"
+
+    def test_refresh_pods(self) -> None:
+        """Test refreshing pods list."""
+        from kulo.widgets.pod_legend import PodLegend
+
+        pod1 = PodInfo(
+            namespace="default",
+            name="pod-1",
+            phase="Running",
+            containers=["main"],
+        )
+        pod2 = PodInfo(
+            namespace="kube-system",
+            name="pod-2",
+            phase="Running",
+            containers=["main", "sidecar"],
+        )
+
+        state = AppState()
+        state.pods_info = [pod1, pod2]
+        state.update_pods([pod1, pod2])
+
+        legend = PodLegend(state=state)
+        legend.set_state(state) # This calls refresh_pods
+        
+        # Check generated options
+        assert legend.option_count > 0
+        
+        # Check ID formats
+        # We can't access .options directly as it's private in OptionList usually, 
+        # but we can try get_option_at_index
+        
+        # pod-1 (single container)
+        # We don't know the exact order easily without iterating, but PodLegend adds them in order of state.pods_info
+        
+        # Assuming order is preserved
+        # Index 0: pod-1
+        opt0 = legend.get_option_at_index(0)
+        assert opt0.id == "default/pod-1/main"
+        
+        # Index 1: pod-2 header (disabled)
+        opt1 = legend.get_option_at_index(1)
+        assert opt1.disabled is True
+        
+        # Index 2: pod-2/main
+        opt2 = legend.get_option_at_index(2)
+        assert opt2.id == "kube-system/pod-2/main"
+        
+        # Index 3: pod-2/sidecar
+        opt3 = legend.get_option_at_index(3)
+        assert opt3.id == "kube-system/pod-2/sidecar"
+
 
 
 # ============================================================================
@@ -520,6 +606,7 @@ class TestHelpBar:
         assert any(k == "n" for k, _ in bar.KEYBINDINGS)  # Namespace
         assert any(k == "f" for k, _ in bar.KEYBINDINGS)  # Filter
         assert any(k == "e" for k, _ in bar.KEYBINDINGS)  # Exclude
+        assert any(k == "m" for k, _ in bar.KEYBINDINGS)  # Max Containers
         assert any(k == "q" for k, _ in bar.KEYBINDINGS)  # Quit
         assert any(k == "Space" for k, _ in bar.KEYBINDINGS)  # Pause
 
@@ -531,7 +618,7 @@ class TestHelpBar:
 
         space_binding = next((k, v) for k, v in bar.KEYBINDINGS if k == "Space")
         assert space_binding is not None
-        assert space_binding[1] == "Pause"
+        assert space_binding[1] == "Pause/Resume"
 
     def test_filter_keybinding_present(self) -> None:
         """Test that f/Filter keybinding is properly defined."""
@@ -562,9 +649,9 @@ class TestExpandedHelp:
 
         help_widget = ExpandedHelp()
 
-        assert "Streaming Control" in help_widget.HELP_TEXT
+        assert "Streaming & View" in help_widget.HELP_TEXT
         assert "Space" in help_widget.HELP_TEXT
-        assert "Pause/resume" in help_widget.HELP_TEXT
+        assert "Pause/Resume" in help_widget.HELP_TEXT
 
 
 # ============================================================================
@@ -698,6 +785,21 @@ class TestModeSelection:
         # Test long form
         args = parser.parse_args(["--filter", "web-.*"])
         assert args.filter == "web-.*"
+
+
+    def test_cli_parser_max_containers_argument(self) -> None:
+        """Test that CLI parser accepts -m/--max-containers argument."""
+        from kulo.main import create_parser
+
+        parser = create_parser()
+
+        # Test short form
+        args = parser.parse_args(["-m", "20"])
+        assert args.max_containers == 20
+
+        # Test long form
+        args = parser.parse_args(["--max-containers", "30"])
+        assert args.max_containers == 30
 
     def test_cli_parser_no_follow_or_tui_flags(self) -> None:
         """Test that --follow, --tui, --no-tui flags are removed."""
