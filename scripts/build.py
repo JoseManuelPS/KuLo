@@ -9,7 +9,7 @@ Usage:
     python scripts/build.py
 
     # Build with specific name
-    python scripts/build.py --name kulo-linux-amd64
+    python scripts/build.py --name kulo-2.0.0
 
     # Build in debug mode (shows console output)
     python scripts/build.py --debug
@@ -20,6 +20,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 
@@ -30,25 +31,32 @@ DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
 
 
-def get_default_binary_name() -> str:
-    """Get the default binary name based on platform.
+def get_version() -> str:
+    """Get the project version from pyproject.toml.
 
     Returns:
-        Binary name string (e.g., 'kulo-linux-amd64').
+        Version string (e.g., '2.0.0').
     """
-    system = platform.system().lower()
-    machine = platform.machine().lower()
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    if not pyproject_path.exists():
+        return "unknown"
 
-    # Normalize architecture names
-    arch_map = {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }
-    arch = arch_map.get(machine, machine)
+    with open(pyproject_path, "r") as f:
+        content = f.read()
+        match = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+        if match:
+            return match.group(1)
+    return "unknown"
 
-    return f"kulo-{system}-{arch}"
+
+def get_default_binary_name() -> str:
+    """Get the default binary name based on project version.
+
+    Returns:
+        Binary name string (e.g., 'kulo-2.0.0').
+    """
+    version = get_version()
+    return f"kulo-v{version}"
 
 
 def clean_build_artifacts() -> None:
