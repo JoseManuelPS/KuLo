@@ -8,7 +8,6 @@ This module provides helper functions for:
 """
 
 import re
-from functools import lru_cache
 
 
 # Time unit multipliers (in seconds)
@@ -22,29 +21,30 @@ TIME_UNITS: dict[str, int] = {
 # Duration pattern: number followed by unit (s, m, h, d)
 DURATION_PATTERN = re.compile(r"^(\d+)([smhd])$", re.IGNORECASE)
 
-# Rich-compatible color palette for pod differentiation
-# These colors are chosen for good contrast and visibility in terminals
+# Kelly's 22 colors of maximum contrast (excluding white/black for terminal compatibility)
+# Source: Kenneth Kelly, "Twenty-two colors of maximum contrast", Color Engineering, 1965
+# These colors are scientifically optimized for maximum perceptual distinction.
 POD_COLOR_PALETTE: list[str] = [
-    "cyan",
-    "magenta",
-    "yellow",
-    "green",
-    "blue",
-    "red",
-    "bright_cyan",
-    "bright_magenta",
-    "bright_yellow",
-    "bright_green",
-    "bright_blue",
-    "bright_red",
-    "dark_orange",
-    "purple",
-    "gold1",
-    "spring_green1",
-    "deep_sky_blue1",
-    "hot_pink",
-    "medium_purple1",
-    "chartreuse1",
+    "#F3C300",  # Vivid Yellow
+    "#875692",  # Strong Purple
+    "#F38400",  # Vivid Orange
+    "#A1CAF1",  # Vivid Light Blue
+    "#BE0032",  # Vivid Red
+    "#C2B280",  # Grayish Yellow
+    "#848482",  # Medium Gray
+    "#008856",  # Strong Green
+    "#E68FAC",  # Strong Purplish Pink
+    "#0067A5",  # Strong Blue
+    "#F99379",  # Vivid Yellowish Pink
+    "#604E97",  # Strong Violet
+    "#F6A600",  # Vivid Orange Yellow
+    "#B3446C",  # Strong Purplish Red
+    "#DCD300",  # Vivid Greenish Yellow
+    "#882D17",  # Strong Reddish Brown
+    "#8DB600",  # Vivid Yellow Green
+    "#654522",  # Deep Yellowish Brown
+    "#E25822",  # Vivid Reddish Orange
+    "#2B3D26",  # Dark Olive Green
 ]
 
 # Log level color mapping
@@ -180,35 +180,6 @@ def matches_any(name: str, patterns: list[re.Pattern[str]]) -> bool:
         return False
 
     return any(pattern.search(name) for pattern in patterns)
-
-
-@lru_cache(maxsize=256)
-def get_color_for_pod(pod_name: str, palette_size: int | None = None) -> str:
-    """Get a consistent color for a pod based on its name.
-
-    Uses a hash of the pod name to select a color from the palette,
-    ensuring the same pod always gets the same color.
-
-    Args:
-        pod_name: The name of the pod.
-        palette_size: Optional size limit for the palette (for testing).
-
-    Returns:
-        A Rich-compatible color string.
-
-    Examples:
-        >>> color1 = get_color_for_pod('my-pod-abc')
-        >>> color2 = get_color_for_pod('my-pod-abc')
-        >>> color1 == color2
-        True
-    """
-    palette = POD_COLOR_PALETTE
-    if palette_size is not None:
-        palette = palette[:palette_size]
-
-    # Use hash for consistent color assignment
-    color_index = hash(pod_name) % len(palette)
-    return palette[color_index]
 
 
 def get_log_level_color(level: str | None) -> str:
@@ -403,24 +374,24 @@ def is_regex_pattern(pattern: str) -> bool:
 
 
 class ColorAssigner:
-    """Deterministic color assigner that avoids repetition.
+    """Color assigner using Kelly's palette of maximum contrast.
 
-    Assigns colors to pods in a deterministic way based on sorted pod names,
-    ensuring:
-    - Same pods always get the same colors across executions
-    - No color repetition until the palette is exhausted
+    Assigns colors to pods in arrival order, ensuring:
+    - Colors are assigned sequentially from Kelly's scientifically optimized palette
+    - No color repetition until the palette (20 colors) is exhausted
+    - When palette is exhausted, colors cycle from the beginning
     - Dynamic pods get the next available color
 
     Attributes:
-        palette: The color palette to use.
+        palette: The color palette to use (Kelly's 20 colors by default).
         _assignments: Map of pod names to assigned colors.
-        _used_colors: Set of colors currently in use.
+        _used_indices: Set of color indices currently in use.
         _next_index: Index of the next color to assign.
 
     Example:
         assigner = ColorAssigner()
         assigner.initialize(['pod-a', 'pod-b', 'pod-c'])
-        color = assigner.get_color('pod-a')  # Returns first color
+        color = assigner.get_color('pod-a')  # Returns first Kelly color
     """
 
     def __init__(self, palette: list[str] | None = None) -> None:
@@ -437,25 +408,24 @@ class ColorAssigner:
     def initialize(self, pod_names: list[str]) -> None:
         """Initialize color assignments for a known set of pods.
 
-        Sorts pods alphabetically and assigns colors in order for
-        deterministic results across executions.
+        Assigns colors in arrival order. When the same pods exist across
+        executions, they will get consistent colors as long as they arrive
+        in the same order (which is typical for Kubernetes API responses).
 
         Args:
-            pod_names: List of pod names to assign colors to.
+            pod_names: List of pod names to assign colors to (in arrival order).
 
         Example:
             assigner = ColorAssigner()
-            assigner.initialize(['pod-c', 'pod-a', 'pod-b'])
+            assigner.initialize(['pod-a', 'pod-b', 'pod-c'])
             # pod-a gets color[0], pod-b gets color[1], pod-c gets color[2]
         """
         self._assignments.clear()
         self._used_indices.clear()
         self._next_index = 0
 
-        # Sort pods for deterministic ordering
-        sorted_pods = sorted(pod_names)
-
-        for pod_name in sorted_pods:
+        # Assign colors in arrival order (no sorting)
+        for pod_name in pod_names:
             self._assign_next_color(pod_name)
 
     def get_color(self, pod_name: str) -> str:

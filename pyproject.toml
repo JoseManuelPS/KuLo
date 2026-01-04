@@ -1,7 +1,7 @@
 [project]
 name = "kulo"
-version = "1.0.0"
-description = "KuLo - Kubernetes Log Aggregator: Visualize K8s logs in an aggregated, filterable, and aesthetically superior manner"
+version = "2.0.0"
+description = "KuLo - Kubernetes Logs: Visualize K8s logs in an aggregated, filterable, and aesthetically superior manner"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "kubernetes-asyncio>=31.0.0",
     "rich>=14.0.0",
+    "textual>=2.0.0",
 ]
 
 [project.optional-dependencies]
