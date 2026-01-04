@@ -53,7 +53,7 @@ def get_default_binary_name() -> str:
     """Get the default binary name based on project version.
 
     Returns:
-        Binary name string (e.g., 'kulo-2.0.0').
+        Binary name string (e.g., 'kulo-v2.0.0').
     """
     version = get_version()
     return f"kulo-v{version}"

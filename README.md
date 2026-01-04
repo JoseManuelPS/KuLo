@@ -32,6 +32,7 @@ uv sync
 
 # (Optional) Activate the virtual environment
 # This allows you to run 'kulo' directly without 'uv run'
+python -m venv .venv
 source .venv/bin/activate
 
 # Run KuLo
