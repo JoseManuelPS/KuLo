@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """Build script for creating KuLo standalone binaries.
 
-This script uses PyInstaller to create a single self-contained executable
-for Linux platforms (amd64 and arm64).
+This script uses PyInstaller to create a single self-contained executable.
+It supports two modes:
+1. Docker Build (Default): Builds inside a container for max compatibility (glibc 2.31 / RHEL9).
+2. Local Build (--local): Builds directly on the host machine.
 
 Usage:
-    # Build for current platform
+    # Build for broad Linux compatibility (uses Docker)
     python scripts/build.py
 
-    # Build with specific name
-    python scripts/build.py --name kulo-2.0.0
+    # Build locally (for development or non-Linux platforms)
+    python scripts/build.py --local
 
-    # Build in debug mode (shows console output)
+    # Debug variants
     python scripts/build.py --debug
+    python scripts/build.py --local --debug
 """
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import re
 from pathlib import Path
 
@@ -30,12 +35,40 @@ SRC_DIR = PROJECT_ROOT / "src"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
 
+# Embedded Dockerfile for hermetic builds
+# Uses Debian Bullseye (glibc 2.31) for compatibility with RHEL 9 (glibc 2.34)
+DOCKERFILE_CONTENT = r"""
+FROM python:3.12-slim-bullseye
+
+# Install build dependencies
+# binutils is needed for PyInstaller to analyze binaries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+WORKDIR /app
+
+# Ensure output directories exist and have broad permissions
+RUN mkdir -p dist build && chmod 777 dist build
+
+# Copy project files for dependency installation
+COPY pyproject.toml uv.lock LICENSE README.md ./
+# Install dependencies into system environment
+RUN uv pip install --system --no-cache .[dev]
+
+# The rest of the source will be mounted at runtime
+"""
+
 
 def get_version() -> str:
     """Get the project version from pyproject.toml.
 
     Returns:
-        Version string (e.g., '2.0.0').
+        Version string (e.g., '2.1.0').
     """
     pyproject_path = PROJECT_ROOT / "pyproject.toml"
     if not pyproject_path.exists():
@@ -53,10 +86,20 @@ def get_default_binary_name() -> str:
     """Get the default binary name based on project version.
 
     Returns:
-        Binary name string (e.g., 'kulo-v2.0.0').
+        Binary name string (e.g., 'kulo-v2.1.0').
     """
     version = get_version()
-    return f"kulo-v{version}"
+    # If running in Docker (Linux), assume linux-x86_64 for now or detect arch
+    # But for local builds, we might want to differentiate
+    suffix = ""
+    if platform.system() == "Linux":
+        suffix = "-linux-x86_64"
+    elif platform.system() == "Darwin":
+        suffix = "-darwin-arm64" if platform.machine() == "arm64" else "-darwin-x86_64"
+    elif platform.system() == "Windows":
+        suffix = "-windows-amd64.exe"
+        
+    return f"kulo-v{version}{suffix}"
 
 
 def clean_build_artifacts() -> None:
@@ -64,24 +107,47 @@ def clean_build_artifacts() -> None:
     for directory in [BUILD_DIR, DIST_DIR]:
         if directory.exists():
             print(f"Cleaning {directory}...")
-            shutil.rmtree(directory)
+            try:
+                shutil.rmtree(directory)
+            except PermissionError:
+                print(f"Warning: Could not clean {directory} due to permissions. Skipping.")
 
 
-def run_pyinstaller(
+def check_docker() -> bool:
+    """Check if Docker is available."""
+    try:
+        subprocess.run(
+            ["podman", "--version"], 
+            check=True, 
+            capture_output=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def build_locally(
     binary_name: str,
     debug: bool = False,
-    one_file: bool = True,
-) -> bool:
-    """Run PyInstaller to create the executable.
+    clean: bool = True,
+    verify: bool = True,
+) -> int:
+    """Run PyInstaller locally to create the executable.
 
     Args:
         binary_name: Name for the output binary.
         debug: Whether to build in debug mode.
-        one_file: Whether to create a single file executable.
+        clean: Whether to clean artifacts before building.
+        verify: Whether to verify the binary after building.
 
     Returns:
-        True if build succeeded, False otherwise.
+        Exit code (0 for success).
     """
+    print(f"building locally: {binary_name}")
+
+    if clean:
+        clean_build_artifacts()
+
     # PyInstaller arguments
     args = [
         sys.executable,
@@ -90,10 +156,11 @@ def run_pyinstaller(
         "--name", binary_name,
         "--clean",
         "--noconfirm",
+        "--onefile",
+        "--specpath", "/tmp", # Write spec file to tmp to avoid permission issues
+        "--distpath", str(DIST_DIR),
+        "--workpath", "/tmp/build", # Build in tmp to avoid permission issues
     ]
-
-    if one_file:
-        args.append("--onefile")
 
     if not debug:
         # Strip debug info and optimize
@@ -140,169 +207,141 @@ def run_pyinstaller(
     # Entry point
     args.append(str(SRC_DIR / "kulo" / "main.py"))
 
-    print(f"Building {binary_name}...")
     print(f"Command: {' '.join(args)}")
 
+    env = os.environ.copy()
+    # Force PyInstaller to use /tmp for caching to avoid writing to read-only/no-perm home or project dir
+    env["PYINSTALLER_CONFIG_DIR"] = "/tmp/pyinstaller_config"
+    env["XDG_CACHE_HOME"] = "/tmp/.cache"
+
     try:
-        result = subprocess.run(
+        subprocess.run(
             args,
             cwd=PROJECT_ROOT,
             check=True,
             capture_output=not debug,
             text=True,
+            env=env,
         )
-        return True
     except subprocess.CalledProcessError as e:
         print(f"Build failed with exit code {e.returncode}")
         if e.stdout:
             print("STDOUT:", e.stdout)
         if e.stderr:
             print("STDERR:", e.stderr)
-        return False
+        return 1
 
-
-def verify_binary(binary_name: str) -> bool:
-    """Verify the built binary works.
-
-    Args:
-        binary_name: Name of the binary to verify.
-
-    Returns:
-        True if verification passed, False otherwise.
-    """
     binary_path = DIST_DIR / binary_name
+    
+    # Simple verification
+    if verify and binary_path.exists():
+        print(f"Verifying {binary_path}...")
+        try:
+            subprocess.run([str(binary_path), "--version"], check=True, capture_output=True)
+            print("Verification successful.")
+        except Exception as e:
+            print(f"Verification failed: {e}")
+            return 1
 
-    if not binary_path.exists():
-        print(f"Binary not found at {binary_path}")
-        return False
-
-    print(f"Verifying {binary_path}...")
-
-    try:
-        result = subprocess.run(
-            [str(binary_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode == 0:
-            print(f"Version output: {result.stdout.strip()}")
-            return True
-        else:
-            print(f"Binary exited with code {result.returncode}")
-            print(f"STDERR: {result.stderr}")
-            return False
-
-    except subprocess.TimeoutExpired:
-        print("Binary timed out during verification")
-        return False
-    except Exception as e:
-        print(f"Verification failed: {e}")
-        return False
-
-
-def print_build_info(binary_name: str) -> None:
-    """Print build summary information.
-
-    Args:
-        binary_name: Name of the built binary.
-    """
-    binary_path = DIST_DIR / binary_name
-
+    # Print summary
     if binary_path.exists():
         size_mb = binary_path.stat().st_size / (1024 * 1024)
-        print()
-        print("=" * 60)
-        print("BUILD SUCCESSFUL")
-        print("=" * 60)
-        print(f"Binary: {binary_path}")
-        print(f"Size: {size_mb:.2f} MB")
-        print()
-        print("To test the binary:")
-        print(f"  {binary_path} --help")
-        print()
-        print("To install system-wide:")
-        print(f"  sudo cp {binary_path} /usr/local/bin/kulo")
-        print("=" * 60)
+        print(f"\nSUCCESS: {binary_path} ({size_mb:.2f} MB)")
+        return 0
+    
+    return 1
 
 
-def create_parser() -> argparse.ArgumentParser:
-    """Create argument parser for the build script.
+def build_in_docker(binary_name: str, debug: bool = False) -> int:
+    """Orchestrate the build inside a Docker container.
 
-    Returns:
-        Configured ArgumentParser.
-    """
-    parser = argparse.ArgumentParser(
-        description="Build KuLo standalone binary using PyInstaller",
-    )
-
-    parser.add_argument(
-        "--name",
-        type=str,
-        default=None,
-        help="Output binary name (default: auto-detect based on platform)",
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Build in debug mode with verbose output",
-    )
-
-    parser.add_argument(
-        "--no-clean",
-        action="store_true",
-        help="Don't clean previous build artifacts",
-    )
-
-    parser.add_argument(
-        "--no-verify",
-        action="store_true",
-        help="Skip binary verification after build",
-    )
-
-    return parser
-
-
-def main() -> int:
-    """Main entry point for the build script.
+    Args:
+        binary_name: Name for the output binary.
+        debug: Whether to enable debug output.
 
     Returns:
         Exit code (0 for success).
     """
-    parser = create_parser()
-    args = parser.parse_args()
+    if not check_docker():
+        print("Error: Docker not found. Install Docker or use --local to build on host.")
+        return 1
 
-    # Determine binary name
-    binary_name = args.name or get_default_binary_name()
-    print(f"Building KuLo as: {binary_name}")
+    image_name = "kulo-builder"
+    print(f"Building Docker image: {image_name}...")
 
-    # Check dependencies
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dockerfile_path = Path(temp_dir) / "Dockerfile"
+        with open(dockerfile_path, "w") as f:
+            f.write(DOCKERFILE_CONTENT.strip())
+
+        # Build image
+        cmd_build = [
+            "podman", "build",
+            "-t", image_name,
+            "-f", str(dockerfile_path),
+            str(PROJECT_ROOT)  # Context is project root to copy pyproject.toml etc
+        ]
+        
+        try:
+            subprocess.run(cmd_build, check=True)
+        except subprocess.CalledProcessError:
+            print("Failed to build Docker image.")
+            return 1
+
+    print("\nRunning build inside container...")
+    
+    # Make sure dist exists so we can map it
+    DIST_DIR.mkdir(exist_ok=True)
+    
+    # Run container
+    # We map the current user so output files aren't owned by root
+    uid = os.getuid()
+    gid = os.getgid()
+    
+    # We mount the entire project root to /app
+    # The container will run 'python scripts/build.py --local' inside
+    
+    cmd_run = [
+        "podman", "run", "--rm",
+        "-v", f"{PROJECT_ROOT}:/app:Z",
+        "--user", f"{uid}:{gid}",
+        image_name,
+        "python", "scripts/build.py", "--local",
+        "--name", binary_name
+    ]
+    
+    if debug:
+        cmd_run.append("--debug")
+
     try:
-        import PyInstaller  # noqa: F401
-    except ImportError:
-        print("PyInstaller not found. Install with: uv pip install pyinstaller")
+        subprocess.run(cmd_run, check=True)
+        return 0
+    except subprocess.CalledProcessError:
+        print("Build inside Docker failed.")
         return 1
 
-    # Clean if requested
-    if not args.no_clean:
-        clean_build_artifacts()
 
-    # Run build
-    if not run_pyinstaller(binary_name, debug=args.debug):
-        return 1
+def main() -> int:
+    parser = argparse.ArgumentParser(description="KuLo Build Script")
+    parser.add_argument("--local", action="store_true", help="Build locally on host")
+    parser.add_argument("--name", type=str, help="Output binary name")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--no-clean", action="store_true", help="Skip cleaning artifacts")
+    parser.add_argument("--no-verify", action="store_true", help="Skip verification")
+    
+    args = parser.parse_args()
+    
+    binary_name = args.name or get_default_binary_name()
 
-    # Verify if requested
-    if not args.no_verify:
-        if not verify_binary(binary_name):
-            print("Warning: Binary verification failed")
-            # Don't fail the build, just warn
-
-    # Print summary
-    print_build_info(binary_name)
-
-    return 0
+    if args.local:
+        return build_locally(
+            binary_name=binary_name,
+            debug=args.debug,
+            clean=not args.no_clean,
+            verify=not args.no_verify
+        )
+    else:
+        return build_in_docker(binary_name=binary_name, debug=args.debug)
 
 
 if __name__ == "__main__":
