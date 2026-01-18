@@ -259,17 +259,21 @@ uv run pytest --cov=kulo
 ```
 
 ### Building Binary
-
-```bash
-# Build for current platform
-uv run python scripts/build.py
-
-# Build with custom name
-uv run python scripts/build.py --name kulo-linux-amd64
-
-# Debug build
-uv run python scripts/build.py --debug
-```
+ 
+ ```bash
+ # Build for all platforms (uses Docker/Podman default)
+ # Creates a static binary compatible with RHEL9+ (glibc 2.31+)
+ uv run python scripts/build.py
+ 
+ # Build for local development (uses host environment)
+ uv run python scripts/build.py --local
+ 
+ # Build with custom name
+ uv run python scripts/build.py --name kulo-linux-custom
+ 
+ # Debug build
+ uv run python scripts/build.py --debug
+ ```
 
 ## Architecture
 

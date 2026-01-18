@@ -50,6 +50,7 @@ class AppState:
     max_containers: int = 10
     is_paused: bool = False
     no_color_logs: bool = False
+    theme: str = "dark"
 
     def update_pods(self, pods: list[PodInfo]) -> None:
         """Update the pods list and initialize active states.
@@ -81,117 +82,6 @@ class AppState:
             if cid in current_container_ids
         }
 
-    def toggle_container(self, pod_name: str, container_name: str) -> bool:
-        """Toggle the active state of a container.
-
-        Args:
-            pod_name: The name of the pod.
-            container_name: The name of the container.
-
-        Returns:
-            The new state of the container.
-        """
-        # Find namespace from pods_info
-        namespace = next(
-            (p.namespace for p in self.pods_info if p.name == pod_name),
-            None,
-        )
-        if not namespace:
-            return False
-
-        unique_id = f"{namespace}/{pod_name}/{container_name}"
-        if unique_id in self.active_containers:
-            self.active_containers[unique_id] = not self.active_containers[unique_id]
-            return self.active_containers[unique_id]
-        return False
-
-    def is_container_active(self, pod_name: str, container_name: str) -> bool:
-        """Check if a container is active.
-
-        Args:
-            pod_name: The name of the pod.
-            container_name: The name of the container.
-
-        Returns:
-            True if the container is active, False otherwise.
-        """
-        # We need to find the namespace to construct the ID
-        # Optimally, this method should perhaps take the unique ID directly or namespace
-        # But for compatibility with existing calls, we might need to look it up.
-        # However, looking up repeatedly is inefficient.
-        # Let's try to pass the namespace in if possible, but existing calls often just have names.
-        # Wait, LogEntry has namespace. PodLegend has PodInfo which has namespace.
-        # So it's better to update the signature to include namespace or accept unique_id generally.
-        # But for now, let's keep it robust by looking up if namespace missing,
-        # OR better: update call sites to pass namespace.
-        # Given the instruction in LogEntry, we have namespace.
-        pass
-
-        # Let's actually look at the method definition I am replacing.
-        # I am replacing methods, so I can change signatures if I update call sites.
-        # The plan says: "Replace is_pod_active with is_container_active(pod_name, container_name)"
-        # But I need namespace for unique ID.
-        # I'll update it to `is_container_active(namespace, pod_name, container_name)`
-        # Or better: `is_container_active(container_info)` or similar.
-        # Let's stick to primitives: `is_container_active(namespace: str, pod_name: str, container_name: str)`
-        # But wait, looking at `update_pods`, I use `unique_id` which is `namespace/pod/container`.
-
-        # Let's try to find the namespace from `pods_info` if not provided? No, that's slow.
-        # I should simply update the call sites.
-        # But `LogEntry` has namespace.
-        # `PodLegend` iterates `PodInfo` so it has namespace.
-
-        # So I will change signature to:
-        # def is_container_active(self, namespace: str, pod_name: str, container_name: str) -> bool:
-
-        # However, for `toggle_container`, the user might trigger it from just a list of options.
-        # If `PodLegend` has access to `PodInfo`, it has namespace.
-
-        # Let's proceed with finding namespace internally for now if easier, OR just simple loop.
-        # Actually, `active_containers` keys are unique strings.
-
-        # Wait, `toggle_pod` previously just took `pod_name`. If pods with same name existed in diff namespaces...
-        # The previous implementation `active_pods` was `dict[str, bool]`. Key was `pod_name`.
-        # `update_pods` was:
-        # pod_names = [pod.name for pod in pods]
-        # self.active_pods[pod.name] = True
-        # So it assumed unique pod names or shared state across namespaces?
-        # If multiple namespaces have same pod name, they shared state!
-        # If I want to match that behavior for containers, I could just use `pod_name/container_name`.
-        # BUT `ContainerInfo.unique_id` uses namespace.
-        # Let's check `ContainerInfo` definition in previous view:
-        # return f"{self.namespace}/{self.pod_name}/{self.container_name}"
-
-        # So unique ID *includes* namespace.
-        # Previous `active_pods` logic:
-        # for pod in pods: if pod.name not in self.active_pods: ...
-        # It seems previous logic didn't account for namespace in the key!
-        # So if I had `ns1/pod-a` and `ns2/pod-a`, toggling one toggled both?
-        # Yes.
-        # Should I change this? The user didn't ask to fix that namespace collision issue, just split containers.
-        # BUT `unique_id` structure suggests namespace is important.
-        # I will use the full unique_id `namespace/pod/container`.
-        # This means I need namespace in `is_container_active`.
-
-        # I'll implement `is_container_active(self, namespace: str, pod_name: str, container_name: str)`
-        # And `toggle_container(self, namespace: str, pod_name: str, container_name: str)`
-
-        return self._is_container_active_impl(pod_name, container_name) # Stub to be replaced by actual code in the file
-
-    def is_container_active(self, namespace: str, pod_name: str, container_name: str) -> bool:
-        """Check if a container is active.
-
-        Args:
-            namespace: The namespace.
-            pod_name: The name of the pod.
-            container_name: The name of the container.
-
-        Returns:
-            True if the container is active.
-        """
-        unique_id = f"{namespace}/{pod_name}/{container_name}"
-        return self.active_containers.get(unique_id, True)
-
     def toggle_container(self, namespace: str, pod_name: str, container_name: str) -> bool:
          """Toggle the active state of a container.
 
@@ -209,6 +99,20 @@ class AppState:
              return self.active_containers[unique_id]
          return False
 
+    def is_container_active(self, namespace: str, pod_name: str, container_name: str) -> bool:
+        """Check if a container is active.
+
+        Args:
+            namespace: The namespace.
+            pod_name: The name of the pod.
+            container_name: The name of the container.
+
+        Returns:
+            True if the container is active.
+        """
+        unique_id = f"{namespace}/{pod_name}/{container_name}"
+        return self.active_containers.get(unique_id, True)
+
     def get_pod_color(self, pod_name: str) -> str:
         """Get the color for a pod.
 
@@ -218,7 +122,7 @@ class AppState:
         Returns:
             A Rich-compatible color string.
         """
-        return self.color_assigner.get_color(pod_name)
+        return self.color_assigner.get_color(pod_name, self.theme)
 
     def set_all_containers_active(self, active: bool) -> None:
         """Set all containers to active or inactive.
@@ -259,7 +163,7 @@ class AppState:
             tail_lines=self.tail_lines,
             max_containers=self.max_containers,
             no_color_logs=self.no_color_logs,
+            theme=self.theme,
         )
         new_state.active_containers = self.active_containers.copy()
         return new_state
-

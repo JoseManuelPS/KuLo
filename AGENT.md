@@ -589,7 +589,28 @@ Chain of thought:
    - Emit `PodToggled` message for state sync
    - Call `refresh_pods()` after state updates
 
+
 3. **For HelpBar changes**:
    - Keep keybindings list in sync with `app.py:BINDINGS`
    - Update both compact and expanded help
+
+## Build System Architecture
+
+The build system is consolidated into a single entry point: `scripts/build.py`.
+
+### Philosophy
+- **Single Source of Truth**: No separate shell scripts or Dockerfiles to maintain.
+- **Hermetic Builds by Default**: Default behavior uses Docker/Podman to build in a controlled environment (Debian Bullseye).
+- **Compatibility First**: We target `glibc 2.31` to support enterprise Linux distros (RHEL 9, etc.).
+
+### Workflows
+1. **Default (Containerized)**:
+   - Embedding: `DOCKERFILE_CONTENT` is a string constant in `build.py`.
+   - Function: `build_in_docker()` writes this to a temp file, builds image `kulo-builder`, and runs `python scripts/build.py --local` *inside* the container.
+   - Permissions: Uses user UID mapping and `:Z` volume labels for SELinux (Podman).
+
+2. **Local (Host)**:
+   - Function: `build_locally()` uses PyInstaller directly on the host.
+   - Usage: `python scripts/build.py --local`.
+   - Dev Loop: Faster, but produced binary depends on host's glibc version.
 

@@ -24,28 +24,48 @@ DURATION_PATTERN = re.compile(r"^(\d+)([smhd])$", re.IGNORECASE)
 # Kelly's 22 colors of maximum contrast (excluding white/black for terminal compatibility)
 # Source: Kenneth Kelly, "Twenty-two colors of maximum contrast", Color Engineering, 1965
 # These colors are scientifically optimized for maximum perceptual distinction.
-POD_COLOR_PALETTE: list[str] = [
-    "#F3C300",  # Vivid Yellow
-    "#875692",  # Strong Purple
-    "#F38400",  # Vivid Orange
-    "#A1CAF1",  # Vivid Light Blue
-    "#BE0032",  # Vivid Red
-    "#C2B280",  # Grayish Yellow
-    "#848482",  # Medium Gray
-    "#008856",  # Strong Green
-    "#E68FAC",  # Strong Purplish Pink
-    "#0067A5",  # Strong Blue
-    "#F99379",  # Vivid Yellowish Pink
-    "#604E97",  # Strong Violet
-    "#F6A600",  # Vivid Orange Yellow
-    "#B3446C",  # Strong Purplish Red
-    "#DCD300",  # Vivid Greenish Yellow
-    "#882D17",  # Strong Reddish Brown
-    "#8DB600",  # Vivid Yellow Green
-    "#654522",  # Deep Yellowish Brown
-    "#E25822",  # Vivid Reddish Orange
-    "#2B3D26",  # Dark Olive Green
+# Optimized palette for dark backgrounds (High Luminance, Neon/Pastel)
+# Rule: Luminance > 60%, no dark/muddy colors.
+POD_COLOR_PALETTE_DARK: list[str] = [
+    "#FFD700",  # Gold / Bright Yellow
+    "#00FFFF",  # Cyan
+    "#FF00FF",  # Magenta
+    "#00FF00",  # Lime
+    "#FF69B4",  # Hot Pink
+    "#FFA500",  # Orange
+    "#BA55D3",  # Medium Orchid
+    "#7FFFD4",  # Aquamarine
+    "#FF6347",  # Tomato (Bright Red-Orange)
+    "#40E0D0",  # Turquoise
+    "#9370DB",  # Medium Purple
+    "#F0E68C",  # Khaki
+    "#ADFF2F",  # Green Yellow
+    "#FFB6C1",  # Light Pink
+    "#87CEEB",  # Sky Blue
 ]
+
+# Optimized palette for light backgrounds (Low Luminance, Deep/Saturated)
+# Rule: Luminance < 40%, no light/washed-out colors.
+POD_COLOR_PALETTE_LIGHT: list[str] = [
+    "#C71585",  # Medium Violet Red
+    "#000080",  # Navy
+    "#006400",  # Dark Green
+    "#8B0000",  # Dark Red
+    "#4B0082",  # Indigo
+    "#8B4513",  # Saddle Brown
+    "#2F4F4F",  # Dark Slate Gray
+    "#800080",  # Purple
+    "#008B8B",  # Dark Cyan
+    "#A52A2A",  # Brown
+    "#556B2F",  # Dark Olive Green
+    "#B22222",  # Firebrick
+    "#00008B",  # Dark Blue
+    "#800000",  # Maroon
+    "#20B2AA",  # Light Sea Green (Darker variant)
+]
+
+# Default palette aliases
+POD_COLOR_PALETTE = POD_COLOR_PALETTE_DARK
 
 # Log level color mapping
 LOG_LEVEL_COLORS: dict[str, str] = {
@@ -383,25 +403,14 @@ class ColorAssigner:
     - Dynamic pods get the next available color
 
     Attributes:
-        palette: The color palette to use (Kelly's 20 colors by default).
-        _assignments: Map of pod names to assigned colors.
+        _assignment_indices: Map of pod names to color indices.
         _used_indices: Set of color indices currently in use.
         _next_index: Index of the next color to assign.
-
-    Example:
-        assigner = ColorAssigner()
-        assigner.initialize(['pod-a', 'pod-b', 'pod-c'])
-        color = assigner.get_color('pod-a')  # Returns first Kelly color
     """
 
-    def __init__(self, palette: list[str] | None = None) -> None:
-        """Initialize the color assigner.
-
-        Args:
-            palette: Optional custom color palette. Uses POD_COLOR_PALETTE if None.
-        """
-        self.palette = palette if palette is not None else POD_COLOR_PALETTE.copy()
-        self._assignments: dict[str, str] = {}
+    def __init__(self) -> None:
+        """Initialize the color assigner."""
+        self._assignment_indices: dict[str, int] = {}
         self._used_indices: set[int] = set()
         self._next_index: int = 0
 
@@ -414,13 +423,8 @@ class ColorAssigner:
 
         Args:
             pod_names: List of pod names to assign colors to (in arrival order).
-
-        Example:
-            assigner = ColorAssigner()
-            assigner.initialize(['pod-a', 'pod-b', 'pod-c'])
-            # pod-a gets color[0], pod-b gets color[1], pod-c gets color[2]
         """
-        self._assignments.clear()
+        self._assignment_indices.clear()
         self._used_indices.clear()
         self._next_index = 0
 
@@ -428,50 +432,51 @@ class ColorAssigner:
         for pod_name in pod_names:
             self._assign_next_color(pod_name)
 
-    def get_color(self, pod_name: str) -> str:
+    def get_color(self, pod_name: str, theme: str = "dark") -> str:
         """Get the color for a pod, assigning one if needed.
 
         Args:
             pod_name: The name of the pod.
+            theme: The theme name ("dark" or "light").
 
         Returns:
             A Rich-compatible color string.
-
-        Example:
-            color = assigner.get_color('my-pod')
         """
-        if pod_name not in self._assignments:
+        if pod_name not in self._assignment_indices:
             self._assign_next_color(pod_name)
 
-        return self._assignments[pod_name]
+        index = self._assignment_indices[pod_name]
 
-    def _assign_next_color(self, pod_name: str) -> str:
-        """Assign the next available color to a pod.
+        if theme == "light":
+            palette = POD_COLOR_PALETTE_LIGHT
+        else:
+            palette = POD_COLOR_PALETTE_DARK
+
+        # Use modulo safe access in case palettes differ in length (though they shouldn't)
+        return palette[index % len(palette)]
+
+    def _assign_next_color(self, pod_name: str) -> None:
+        """Assign the next available color index to a pod.
 
         Args:
             pod_name: The name of the pod.
-
-        Returns:
-            The assigned color.
         """
-        if pod_name in self._assignments:
-            return self._assignments[pod_name]
+        if pod_name in self._assignment_indices:
+            return
 
-        # Find the next unused color index
-        color_index = self._next_index % len(self.palette)
+        # Find the next unused color index (based on default palette size)
+        base_palette_len = len(POD_COLOR_PALETTE_DARK)
+        color_index = self._next_index % base_palette_len
 
         # If we've cycled through all colors, just use the next in sequence
         # This ensures deterministic behavior even when palette is exhausted
-        if self._next_index < len(self.palette):
+        if self._next_index < base_palette_len:
             # Still have unused colors
             self._used_indices.add(color_index)
         # else: we're cycling, which is fine
 
-        color = self.palette[color_index]
-        self._assignments[pod_name] = color
+        self._assignment_indices[pod_name] = color_index
         self._next_index += 1
-
-        return color
 
     def update_for_new_pod(self, pod_name: str) -> str:
         """Handle a dynamically discovered pod.
@@ -482,20 +487,28 @@ class ColorAssigner:
             pod_name: The name of the new pod.
 
         Returns:
-            The assigned color.
+            The assigned color (using default theme, typically not used by caller).
         """
+        # We return default dark theme color for compatibility,
+        # but the meaningful change is the internal state update.
         return self.get_color(pod_name)
 
     @property
     def assigned_count(self) -> int:
         """Return the number of pods with assigned colors."""
-        return len(self._assignments)
+        return len(self._assignment_indices)
 
-    def get_all_assignments(self) -> dict[str, str]:
-        """Return a copy of all current color assignments.
+    def get_all_assignments(self, theme: str = "dark") -> dict[str, str]:
+        """Return a copy of all current color assignments for a theme.
+
+        Args:
+            theme: The theme to get colors for.
 
         Returns:
             Dictionary mapping pod names to colors.
         """
-        return self._assignments.copy()
+        result = {}
+        for pod_name in self._assignment_indices:
+            result[pod_name] = self.get_color(pod_name, theme)
+        return result
 

@@ -180,6 +180,29 @@ class KuloApp(App):
         # Start the connection and streaming (calls the @work decorated method)
         self._initialize_and_stream()
 
+    def watch_theme(self, theme: str) -> None:
+        """React to theme changes.
+
+        Args:
+            theme: The new theme name (e.g. 'textual-dark', 'textual-light').
+        """
+        is_light = "light" in theme
+        new_theme_mode = "light" if is_light else "dark"
+
+        if self.state.theme != new_theme_mode:
+            self.state.theme = new_theme_mode
+
+            # Refresh components that use pod colors
+            if self.is_mounted:
+                log_panel = self.query_one("#log-panel", LogPanel)
+                pod_legend = self.query_one("#pod-legend", PodLegend)
+                
+                # Force refresh of pod legend (it reads state color)
+                pod_legend.refresh_pods(preserve_position=True)
+                
+                # Notify user
+                self.notify(f"Theme changed to {new_theme_mode}. Pod colors updated.")
+
     @work(exclusive=True)
     async def _initialize_and_stream(self) -> None:
         """Initialize K8s connection and start streaming."""

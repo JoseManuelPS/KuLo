@@ -16,7 +16,8 @@ from kulo.models import ContainerInfo, LogEntry, PodInfo, StreamContext
 from kulo.utils import (
     ColorAssigner,
     DurationParseError,
-    POD_COLOR_PALETTE,
+    POD_COLOR_PALETTE_DARK,
+    POD_COLOR_PALETTE_LIGHT,
     calculate_backoff,
     compile_patterns,
     extract_log_level,
@@ -753,15 +754,15 @@ class TestColorAssigner:
         assigner.initialize(["pod-c", "pod-a", "pod-b"])
 
         # pod-c should get first color (arrived first)
-        assert assigner.get_color("pod-c") == POD_COLOR_PALETTE[0]
+        assert assigner.get_color("pod-c") == POD_COLOR_PALETTE_DARK[0]
         # pod-a should get second color (arrived second)
-        assert assigner.get_color("pod-a") == POD_COLOR_PALETTE[1]
+        assert assigner.get_color("pod-a") == POD_COLOR_PALETTE_DARK[1]
         # pod-b should get third color (arrived third)
-        assert assigner.get_color("pod-b") == POD_COLOR_PALETTE[2]
+        assert assigner.get_color("pod-b") == POD_COLOR_PALETTE_DARK[2]
 
     def test_no_repetition_within_palette_size(self) -> None:
         """Test that colors don't repeat within palette size."""
-        palette_size = len(POD_COLOR_PALETTE)
+        palette_size = len(POD_COLOR_PALETTE_DARK)
         pod_names = [f"pod-{i:03d}" for i in range(palette_size)]
 
         assigner = ColorAssigner()
@@ -786,20 +787,35 @@ class TestColorAssigner:
         color_c = assigner.update_for_new_pod("pod-c")
 
         # New pod should get next available color
-        assert color_c == POD_COLOR_PALETTE[2]
+        assert color_c == POD_COLOR_PALETTE_DARK[2]
 
         # Original pods should keep their colors
         assert assigner.get_color("pod-a") == color_a
         assert assigner.get_color("pod-b") == color_b
 
-    def test_custom_palette(self) -> None:
-        """Test using a custom palette."""
-        custom_palette = ["red", "green", "blue"]
-        assigner = ColorAssigner(palette=custom_palette)
-        assigner.initialize(["pod-a", "pod-b"])
+    def test_dual_palette_support(self) -> None:
+        """Test that ColorAssigner supports both dark and light variants."""
+        assigner = ColorAssigner()
+        assigner.initialize(["pod-a"])
 
-        assert assigner.get_color("pod-a") == "red"
-        assert assigner.get_color("pod-b") == "green"
+        # Default should be dark
+        assert assigner.get_color("pod-a") == POD_COLOR_PALETTE_DARK[0]
+        assert assigner.get_color("pod-a", theme="dark") == POD_COLOR_PALETTE_DARK[0]
+
+        # Light theme request
+        assert assigner.get_color("pod-a", theme="light") == POD_COLOR_PALETTE_LIGHT[0]
+
+        # Verify index consistency:
+        # If we initialize 5 pods, pod 5 should be index 4 in both
+        pods = [f"pod-{i}" for i in range(5)]
+        assigner.initialize(pods)
+
+        for i, pod in enumerate(pods):
+            dark_color = assigner.get_color(pod, theme="dark")
+            light_color = assigner.get_color(pod, theme="light")
+            
+            assert dark_color == POD_COLOR_PALETTE_DARK[i]
+            assert light_color == POD_COLOR_PALETTE_LIGHT[i]
 
     def test_assigned_count(self) -> None:
         """Test the assigned_count property."""
