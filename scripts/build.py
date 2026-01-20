@@ -89,17 +89,7 @@ def get_default_binary_name() -> str:
         Binary name string (e.g., 'kulo-v2.1.0').
     """
     version = get_version()
-    # If running in Docker (Linux), assume linux-x86_64 for now or detect arch
-    # But for local builds, we might want to differentiate
-    suffix = ""
-    if platform.system() == "Linux":
-        suffix = "-linux-x86_64"
-    elif platform.system() == "Darwin":
-        suffix = "-darwin-arm64" if platform.machine() == "arm64" else "-darwin-x86_64"
-    elif platform.system() == "Windows":
-        suffix = "-windows-amd64.exe"
-        
-    return f"kulo-v{version}{suffix}"
+    return f"kulo-v{version}"
 
 
 def clean_build_artifacts() -> None:
